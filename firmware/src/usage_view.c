@@ -528,11 +528,12 @@ static void render_weekly(void)
 	lv_label_set_text(weekly.name, sel_name[weekly_sel]);
 #else
 	/* One window, so the gauge never needs to say which one it is showing
-	 * -- but it still says it, because "WEEKLY 7d" is the honest name for
-	 * the number under it. */
+	 * -- but it still says it, because "MONTH" is the honest name for the
+	 * number under it: this build shows spend against a monthly budget, and
+	 * its countdown runs to the first of the next month. */
 	double pct = last_w_pct;
 
-	lv_label_set_text(weekly.name, "WEEKLY 7d");
+	lv_label_set_text(weekly.name, "MONTH");
 #endif
 	if (pct < 0) {
 		lv_label_set_text(weekly.pct, "--%");
@@ -856,8 +857,8 @@ void usage_view_init(void)
 	lv_obj_set_style_text_align(provider_lbl, LV_TEXT_ALIGN_CENTER, 0);
 	lv_obj_align(provider_lbl, LV_ALIGN_BOTTOM_MID, 0, -PILL_BOTTOM_OFF);
 
-	build_gauge(&session, scr, -GAUGE_CX, "SESSION 5h");
-	build_gauge(&weekly, scr, GAUGE_CX, "WEEKLY 7d");
+	build_gauge(&session, scr, -GAUGE_CX, "SESSION");
+	build_gauge(&weekly, scr, GAUGE_CX, "MONTH");
 
 
 	/* Edge affordances: without them nobody discovers the swipes (user
