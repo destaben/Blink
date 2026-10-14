@@ -2275,7 +2275,7 @@ static void refresh_provider1(void)
 		char t[sizeof(provider1_tag)];
 
 		tag_cased(t, sizeof(t), tag);
-		lv_label_set_text(provider_lbl, t);
+		lv_label_set_text_fmt(provider_lbl, "%s %s", t, PILL_SUFFIX);
 		/*
 		 * The fill is what says "you can press this", so it is there
 		 * only when pressing does something. A single-provider desk
