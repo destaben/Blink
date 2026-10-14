@@ -1,5 +1,7 @@
 """Monthly spend as a dial: refuse to show a number the command did not give."""
 import datetime
+import json
+import os
 
 from pc.providers import adi_cost
 from pc.providers.adi_cost import AdiCostProvider, next_month_start, parse_spend
@@ -146,3 +148,29 @@ def test_spend_never_teaches_the_weekly_anchor(monkeypatch):
                         lambda frames, path, now: seen.extend(frames))
     _bus(_Fixed([]), _cost_provider()).poll_frames()
     assert all(f.src != "adi-cost" for f in seen)
+
+
+def test_each_spend_source_marks_only_its_own_dial(tmp_path):
+    from pc.providers.session_cost import SessionCostProvider
+    assert _provider(lambda argv: OUT).parse_output(OUT, NOW).cost_dials == 2
+    d = tmp_path / "-p"
+    d.mkdir()
+    f = d / "s.jsonl"
+    f.write_text(json.dumps({"message": {"id": "a", "role": "assistant",
+                 "usage": {"output_tokens": 1_000_000}}}) + "\n")
+    os.utime(f, (NOW, NOW))
+    sp = SessionCostProvider(now=lambda: NOW, root=str(tmp_path))
+    sp._refresh()
+    assert sp.poll(NOW)[0].cost_dials == 1
+
+
+def test_merged_frame_marks_exactly_the_spend_dials():
+    from pc import normalizer
+    plan = _plan_frame(42.0)
+    spend_w = _provider(lambda argv: OUT).parse_output(OUT, NOW)
+    # a plan session window plus a spend weekly window: only the weekly dial
+    # is spend
+    merged = normalizer.merge([plan, spend_w])
+    assert merged.cost_dials == 2
+    # nothing but plan frames: plan account, nothing marked
+    assert normalizer.merge([plan]).cost_dials == 0

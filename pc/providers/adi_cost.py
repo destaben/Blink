@@ -146,6 +146,7 @@ class AdiCostProvider(ProviderParser):
             session_pct=base.UNKNOWN,
             weekly_pct=pct,
             weekly_resets_at=next_month_start(now_epoch),
+            cost_dials=2,
             stale=(now_epoch - read_at) > STALE_AFTER_S,
         )
 

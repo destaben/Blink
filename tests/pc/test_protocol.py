@@ -940,3 +940,47 @@ def test_a_month_long_countdown_survives_on_the_weekly_slot():
                                protocol.MONTH_COUNTDOWN_MAX_S) == 31 * 86400
     # The default ceiling for every other field is unchanged.
     assert protocol.secs_until(now + 17 * 86400, now) == protocol.COUNTDOWN_MAX_S
+
+
+# --- spend dials: the board names them, plan accounts are untouched --------
+
+from pc.providers import base as _base
+
+
+def _frame(**kw):
+    kw.setdefault("provider", "claude")
+    kw.setdefault("src", "cli")
+    kw.setdefault("observed_at", 1_787_000_000.0)
+    return _base.NormalizedUsageFrame(**kw)
+
+
+def test_a_plan_account_message_carries_no_cost_key():
+    msg = protocol.frame_to_usage(
+        _frame(session_pct=10.0, weekly_pct=20.0), 1_787_000_000.0)
+    assert "cd" not in msg
+
+
+def test_spend_dials_travel_as_a_bitmask():
+    for dials in (1, 2, 3):
+        msg = protocol.frame_to_usage(
+            _frame(session_pct=1.0, weekly_pct=2.0, cost_dials=dials),
+            1_787_000_000.0)
+        assert msg["cd"] == dials
+
+
+def test_a_spend_message_still_fits_the_board_line():
+    msg = protocol.frame_to_usage(
+        _frame(session_pct=99.9, weekly_pct=94.1, cost_dials=3,
+               weekly_resets_at=1_787_000_000.0 + 31 * 86400,
+               n_run=3, n_wait=2, n_stuck=1, n_idle=4, n_agents=7,
+               state="running"),
+        1_787_000_000.0)
+    raw, why = protocol.encode_checked(msg)
+    assert raw is not None, why
+
+
+def test_changing_the_mode_is_news_worth_a_push():
+    a = protocol.frame_to_usage(_frame(session_pct=1.0), 1_787_000_000.0)
+    b = protocol.frame_to_usage(_frame(session_pct=1.0, cost_dials=1),
+                                1_787_000_000.0)
+    assert protocol.meaningful_usage(a) != protocol.meaningful_usage(b)

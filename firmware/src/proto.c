@@ -367,6 +367,14 @@ static void dispatch(const char *json)
 		num(json, "n_stuck", &nst, 0, 9999);
 		usage_view_set_counts((int)ns, (int)nr, (int)nw, (int)nst);
 
+		/* Which dials are spend rather than a plan window. Absent is the
+		 * normal case and means 0, and it is applied on every message so a
+		 * daemon that stops sending it puts the plan names back. */
+		double cd = 0;
+
+		num(json, "cd", &cd, 0, 3);
+		usage_view_set_cost_dials((int)cd);
+
 		char p1[16];
 
 		if (msg_get_str(json, "provider", p1, sizeof(p1))) {

@@ -186,4 +186,4 @@ class SessionCostProvider(ProviderParser):
             return []
         return [NormalizedUsageFrame(
             provider=PROVIDER_ID, src=SRC_ID, observed_at=mtime,
-            session_pct=pct, weekly_pct=base.UNKNOWN)]
+            session_pct=pct, weekly_pct=base.UNKNOWN, cost_dials=1)]

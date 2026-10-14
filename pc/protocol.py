@@ -206,7 +206,7 @@ def _round_pct(v):
 
 def usage(session_pct, session_resets_at, weekly_pct, weekly_resets_at, models,
           session_resets_in_s=-1, weekly_resets_in_s=-1, stale=False,
-          provider="claude", src="cli", state="", n_sess=0, n_run=0, n_wait=0, n_stuck=0,
+          provider="claude", src="cli", cost_dials=0, state="", n_sess=0, n_run=0, n_wait=0, n_stuck=0,
           n_agents=0, p2="", p2_session_pct=UNKNOWN,
           p2_weekly_pct=UNKNOWN, p2_session_resets_in_s=-1,
           p2_weekly_resets_in_s=-1, p2_stale=False, burn_pph=None,
@@ -336,6 +336,10 @@ The firmware reads this field: proto.c's "usage" handler calls
     # spending a budget a future field will need. An absent key already means
     # "unknown" on both sides.
     extra = {"provider": provider, "src": src}
+    # Absent means a plan account: omitted, not sent as 0, so those messages
+    # do not grow by a byte. The board defaults an absent key to 0.
+    if cost_dials:
+        extra["cd"] = int(cost_dials)
     if state:
         extra["state"] = state
 
@@ -514,6 +518,7 @@ def frame_to_usage(frame, now_epoch: float, secondary=None) -> dict:
                                       MONTH_COUNTDOWN_MAX_S),
         stale=frame.stale,
         provider=frame.provider, src=frame.src,
+        cost_dials=frame.cost_dials,
         # One light for the whole desk: the worse of the two providers'
         # states, and the counts of both. The light is a claim on the person
         # ("something needs you"), and a Codex session waiting on them is
