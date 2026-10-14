@@ -72,6 +72,13 @@ def encode(msg: dict) -> bytes:
 # under twelve days: comfortably clear of the seven-day window, and six digits.
 COUNTDOWN_MAX_S = 999999
 
+# The weekly slot also carries a monthly window on accounts that have no plan
+# windows (pc/providers/adi_cost.py), and a month is longer than the 12 days
+# above. 31 days is the most one can be, and seven digits is one byte more than
+# six -- paid by this single field only, so the widest line the daemon can
+# build stays under the cap.
+MONTH_COUNTDOWN_MAX_S = 31 * 86400
+
 
 def encode_checked(msg: dict):
     """encode(), but None when the result could not be received.
@@ -88,7 +95,8 @@ def encode_checked(msg: dict):
     return raw, None
 
 
-def secs_until(resets_at, now_epoch: float) -> int:
+def secs_until(resets_at, now_epoch: float,
+               max_s: int = COUNTDOWN_MAX_S) -> int:
     """Seconds until `resets_at`. -1 when unknown or already past.
 
     -1 rather than 0 for missing input: 0 renders as "resets now", which is a
@@ -115,7 +123,7 @@ def secs_until(resets_at, now_epoch: float) -> int:
     # have already passed. Ceiling keeps the value honest (the window really
     # does have "about a second" left) and keeps 0 reserved for the firmware's
     # own countdown reaching it.
-    return min(COUNTDOWN_MAX_S, max(1, math.ceil(resets_at - now_epoch)))
+    return min(max_s, max(1, math.ceil(resets_at - now_epoch)))
 
 
 def decode(line: str):
@@ -502,7 +510,8 @@ def frame_to_usage(frame, now_epoch: float, secondary=None) -> dict:
         frame.weekly_pct, frame.weekly_resets_at,
         [],
         session_resets_in_s=secs_until(frame.session_resets_at, now_epoch),
-        weekly_resets_in_s=secs_until(frame.weekly_resets_at, now_epoch),
+        weekly_resets_in_s=secs_until(frame.weekly_resets_at, now_epoch,
+                                      MONTH_COUNTDOWN_MAX_S),
         stale=frame.stale,
         provider=frame.provider, src=frame.src,
         # One light for the whole desk: the worse of the two providers'

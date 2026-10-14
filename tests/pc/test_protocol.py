@@ -927,3 +927,16 @@ class VolatileUsageKeys(unittest.TestCase):
         msg = dict(self._loaded(), some_field_from_2027=7)
         self.assertEqual(
             protocol.meaningful_usage(msg)["some_field_from_2027"], 7)
+
+
+def test_a_month_long_countdown_survives_on_the_weekly_slot():
+    """A monthly window (adi-cost) resets up to 31 days out; the weekly slot
+    must carry it rather than clamp it to twelve days."""
+    now = 1_787_000_000.0
+    assert protocol.secs_until(now + 17 * 86400, now,
+                               protocol.MONTH_COUNTDOWN_MAX_S) == 17 * 86400
+    # A misparse is still clamped, just at a month and not at a year.
+    assert protocol.secs_until(now + 31536000, now,
+                               protocol.MONTH_COUNTDOWN_MAX_S) == 31 * 86400
+    # The default ceiling for every other field is unchanged.
+    assert protocol.secs_until(now + 17 * 86400, now) == protocol.COUNTDOWN_MAX_S
