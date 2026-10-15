@@ -2,6 +2,7 @@
 # Dev loop for the CYD board.
 #
 #   tools/dev.sh flash   -- stop daemon, build, flash, restart daemon
+#                           (PILOT=1 for a pilot-panel board)
 #   tools/dev.sh up      -- start the daemon in the background
 #   tools/dev.sh down    -- stop the daemon (frees the port)
 #   tools/dev.sh log     -- tail the daemon log
@@ -90,7 +91,13 @@ flash)
 	fi
 	activate   # sources zephyr-env.sh too
 	cd "$ROOT/firmware"
-	west build -b "$BOARD" . -- -DUSE_CCACHE=0 | tail -3
+	# PILOT=1 builds for the two pilot panels (firmware/pilot.conf). Always
+	# passed, empty when unset: EXTRA_CONF_FILE is cached in the build
+	# directory, so a pilot build followed by a plain one would otherwise stay
+	# a pilot build. A production firmware on a pilot panel (or the reverse)
+	# renders mirrored, red/blue swapped and dim -- see BLINK_PANEL_PILOT.
+	west build -b "$BOARD" . -- -DUSE_CCACHE=0 \
+		-DEXTRA_CONF_FILE="${PILOT:+pilot.conf}" | tail -3
 	# 921600 is beyond what this board's CH340 tolerates; it fails mid-write.
 	west flash --esp-device "$PORT" --esp-baud-rate 115200 | tail -1
 	up

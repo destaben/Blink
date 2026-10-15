@@ -272,6 +272,77 @@ config partition erased first (`esptool.py erase_region 0x3b0000 0x30000`).
 Pass `--port` to name a board when more than one is attached, and `--no-build`
 to reuse the last build.
 
+**A board on your own bench is not a unit to ship: use `tools/dev.sh flash`,
+not `burn.sh`.** `burn.sh` stamps the edition, and the stamp is write-once
+(above); a development board burned with it is a Claude or Codex unit for good,
+and undoing that means erasing its config partition. `dev.sh flash` stops the
+daemon, asks the chip whether it is fused (and refuses if it is, since it
+writes plaintext), builds, flashes at 115200 and restarts the daemon. It does
+not stamp. The board shows HOST LOST while the daemon is down, which is
+expected.
+
+### Flashing a bench board, step by step
+
+1. **Free the port.** One process may own it, and the installed daemon
+   (`~/.blink/bin/blink`) does. Stop it and check nothing is left:
+
+   ```bash
+   launchctl bootout gui/$(id -u)/com.blink.bridge
+   sleep 5; lsof /dev/cu.usbserial-*      # no output = free
+   ```
+
+   `bootout` returns before the process is gone, and on 2026-10-15 the process
+   outlived an unloaded job and kept the port. If `lsof` still lists `blink`,
+   stop that pid before going on; `dev.sh` only stops its own bridge.
+2. **Pick the panel batch.** Production units and the two pilot boards carry
+   different display modules. A production build on a pilot panel comes out
+   mirrored, red and blue swapped, and dim; the reverse is wrong too
+   (`BLINK_PANEL_PILOT` in `firmware/Kconfig`). The fuse state does not tell
+   you which one you have. If the picture is mirrored, use `PILOT=1`.
+   Do **not** change `rotation` in the overlay to fix it: 90 and 270 differ by
+   a 180 degree turn and neither un-mirrors, and touch is solved against 90.
+3. **Flash:**
+
+   ```bash
+   PILOT=1 PORT=/dev/cu.usbserial-XXXX tools/dev.sh flash   # pilot panel
+   PORT=/dev/cu.usbserial-XXXX tools/dev.sh flash           # production panel
+   ```
+
+   `PORT` defaults to the first `/dev/cu.usbserial*`. It reads
+   `FLASH_CRYPT_CNT` first and refuses a fused chip. `BLINK_SKIP_EFUSE_CHECK=1`
+   overrides that, and should not be used: a plaintext image on a fused chip
+   will not boot.
+4. **Put the daemon back.** `dev.sh` leaves its own bridge on the port:
+
+   ```bash
+   tools/dev.sh down
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.blink.bridge.plist
+   launchctl kickstart -k gui/$(id -u)/com.blink.bridge
+   ```
+
+   `bootstrap` registers the job without starting it; `kickstart -k` starts it.
+5. **Look at the board.** Orientation, no mirror, red and blue the right way
+   round, and touch landing where you press. Done means flashed and seen, not
+   built.
+
+`dev.sh` builds without MCUboot, so a board flashed this way is not updatable
+over the air until it is re-flashed with `tools/burn.sh` (**unverified** on this
+board; `burn.sh` documents the effect of a plain `west flash`).
+
+If `dev.sh` says `cannot tell whether this chip is fused`, the cause is not
+always a busy port: it discards `espefuse`'s own error. Run
+`espefuse.py --port <port> summary` and read it. On 2026-10-15 it was an
+`ImportError: cannot import name 'BitStream' from 'bitstring'`: esptool does not
+cap `bitstring`, and 5.0 dropped that name. Fix it in the esptool environment
+with `pipx inject esptool 'bitstring<5' --force` (or
+`pip install 'bitstring<5'` in the venv).
+
+The scripts find the Zephyr workspace themselves (`tools/lib_zephyr.sh`,
+`BLINK_ZEPHYR` overrides). They are meant to be run, not sourced from an
+interactive zsh: with `nomatch` on, a candidate path that does not exist makes
+the lookup fail outright and it reads as "no workspace" on a machine that has
+one.
+
 **What it flashes is not the release artifact.** `zephyr.signed.bin` is signed
 but not *confirmed*: its MCUboot trailer says "boot this once". That is right
 for OTA, where the image lands in slot 1 and the firmware confirms it after it
