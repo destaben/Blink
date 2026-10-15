@@ -24,10 +24,10 @@
 
 /*
  * Taps are ignored for this long after the card appears. A person who is
- * tapping the panel to silence the blinking frame (usage_view.c) lands that
- * tap on whatever is under their finger, and for a few hundred milliseconds
- * that would be Allow. The buttons are dimmed until they arm, so the delay
- * reads as "not yet" instead of as a dead panel.
+ * tapping the panel for some other reason lands that tap on whatever is under
+ * their finger, and for a few hundred milliseconds that would be Allow. The
+ * buttons are dimmed until they arm, so the delay reads as "not yet" instead
+ * of as a dead panel.
  */
 #define ARM_AFTER_MS	700
 

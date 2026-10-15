@@ -130,34 +130,3 @@ bool usage_toast_change(const struct usage_counts *prev,
 	}
 	return false;
 }
-
-static bool wants_person(const struct usage_counts *c)
-{
-	return c->n_wait > 0 || c->n_stuck > 0;
-}
-
-bool usage_alert_update(struct usage_alert *a, const struct usage_counts *prev,
-			const struct usage_counts *now)
-{
-	if (a == NULL || now == NULL) {
-		return false;
-	}
-	if (!wants_person(now)) {
-		/* Answered, or the session closed. The next one starts fresh. */
-		a->acked = false;
-		return false;
-	}
-	if (prev != NULL && (now->n_wait > prev->n_wait ||
-			     now->n_stuck > prev->n_stuck)) {
-		/* Somebody NEW needs the person; an old tap does not cover it. */
-		a->acked = false;
-	}
-	return !a->acked;
-}
-
-void usage_alert_ack(struct usage_alert *a)
-{
-	if (a != NULL) {
-		a->acked = true;
-	}
-}

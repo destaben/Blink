@@ -104,46 +104,4 @@ bool usage_toast_change(const struct usage_counts *prev,
 			enum usage_activity aggregate,
 			struct usage_toast *out);
 
-/*
- * The persistent alert: a frame round the whole panel that blinks while a
- * person is wanted.
- *
- * The popup above is NEWS and news does not keep -- five seconds, and then
- * only an 8 px pip and a line of text are left. That is right for "a session
- * finished" and wrong for "a prompt is open and nothing proceeds until you
- * answer it": somebody who looked away for six seconds has no way to find out.
- * This is the part that keeps.
- *
- * It wants the person while any session is WAITING or FAILED/STUCK -- the two
- * the pips already paint red -- and it stops when either (a) that stops being
- * true, which is what happens when the prompt is answered at the computer
- * because the hook clears the state, or (b) the owner taps the panel.
- *
- * A tap SILENCES, it does not resolve. The red pip and the sentence stay; only
- * the blinking stops, so a person who has seen it and is finishing something
- * else is not shouted at for the next ten minutes.
- *
- * And a silenced alert is not silenced forever: a NEW waiting or failed
- * session rises from the previous poll, the ack is dropped, and it blinks
- * again. Without that a single tap in the morning would mute the panel for
- * the whole day, which is the failure this feature exists to prevent.
- */
-struct usage_alert {
-	bool acked;
-};
-
-/*
- * Feed one poll. Returns true while the frame should blink.
- *
- * `prev == NULL` is boot or reconnect, as for the popup, but the answer
- * differs on purpose: the popup stays quiet there because a count rising from
- * nothing is not news, while this blinks, because a prompt that is open when
- * the panel comes up is still open.
- */
-bool usage_alert_update(struct usage_alert *a, const struct usage_counts *prev,
-			const struct usage_counts *now);
-
-/* The owner tapped. */
-void usage_alert_ack(struct usage_alert *a);
-
 #endif /* USAGE_STATE_H */
