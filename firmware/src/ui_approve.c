@@ -19,6 +19,8 @@
 #define CARD_W		304
 #define CARD_H		216
 #define CMD_BOX_H	108
+/* Ceiling for the tool-name pill; the title gets the rest of the row. */
+#define PILL_MAX_W	96
 
 /*
  * Taps are ignored for this long after the card appears. A person who is
@@ -132,6 +134,33 @@ static lv_obj_t *mk_button(lv_obj_t *parent, const char *txt, lv_color_t bg,
 	return b;
 }
 
+/* Sentence case, and what the thing is rather than which tool asks. The tool
+ * names are Claude Code's (pc/approvals.py TOOL_KEYS); anything else falls
+ * back to a question that is still true. */
+static const char *headline(const char *tool)
+{
+	if (tool == NULL) {
+		return "Allow this?";
+	}
+	if (strcmp(tool, "Bash") == 0) {
+		return "Run this command?";
+	}
+	if (strcmp(tool, "Write") == 0) {
+		return "Write this file?";
+	}
+	if (strcmp(tool, "Edit") == 0 || strcmp(tool, "MultiEdit") == 0 ||
+	    strcmp(tool, "NotebookEdit") == 0) {
+		return "Edit this file?";
+	}
+	if (strcmp(tool, "Read") == 0) {
+		return "Read this file?";
+	}
+	if (strcmp(tool, "WebFetch") == 0) {
+		return "Open this address?";
+	}
+	return "Allow this?";
+}
+
 bool ui_approve_show(const char *id, const char *tool, const char *cmd,
 		     int ttl_s)
 {
@@ -168,12 +197,32 @@ bool ui_approve_show(const char *id, const char *tool, const char *cmd,
 	 * under an open question. */
 	lv_obj_clear_flag(card, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
+	/* The question says what is being asked in plain words, and the tool's
+	 * own name sits in a quiet pill beside it, as the provider name does on
+	 * the dashboard. "Allow Bash?" named the tool and left the person to work
+	 * out what it meant (user feedback 2026-10-15). */
+	lv_obj_t *pill = lv_label_create(card);
+
+	lv_label_set_long_mode(pill, LV_LABEL_LONG_DOT);
+	lv_label_set_text(pill, tool && tool[0] ? tool : "tool");
+	lv_obj_set_style_text_color(pill, COL_DIM, 0);
+	lv_obj_set_style_text_letter_space(pill, 1, 0);
+	lv_obj_set_style_bg_color(pill, COL_PANEL, 0);
+	lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+	lv_obj_set_style_radius(pill, LV_RADIUS_CIRCLE, 0);
+	lv_obj_set_style_pad_hor(pill, 9, 0);
+	lv_obj_set_style_pad_ver(pill, 2, 0);
+	lv_obj_set_width(pill, LV_SIZE_CONTENT);
+	lv_obj_set_style_max_width(pill, PILL_MAX_W, 0);
+	lv_obj_align(pill, LV_ALIGN_TOP_RIGHT, -12, 6);
+
 	lv_obj_t *title = lv_label_create(card);
 
 	lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-	lv_obj_set_width(title, CARD_W - 24);
-	lv_label_set_text_fmt(title, "Allow %s?", tool && tool[0] ? tool : "this");
-	lv_obj_set_style_text_color(title, COL_AMBER, 0);
+	lv_obj_set_width(title, CARD_W - 24 - PILL_MAX_W - 8);
+	lv_label_set_text(title, headline(tool));
+	lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+	lv_obj_set_style_text_color(title, COL_TEXT, 0);
 	lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 8);
 
 	/* The text in a clipped box of its own. The daemon only sends what fits
