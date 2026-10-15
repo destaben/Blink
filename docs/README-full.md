@@ -281,49 +281,40 @@ writes plaintext), builds, flashes at 115200 and restarts the daemon. It does
 not stamp. The board shows HOST LOST while the daemon is down, which is
 expected.
 
-### Flashing a bench board, step by step
+### Flashing a bench board
 
-1. **Free the port.** One process may own it, and the installed daemon
-   (`~/.blink/bin/blink`) does. Stop it and check nothing is left:
+One command:
 
-   ```bash
-   launchctl bootout gui/$(id -u)/com.blink.bridge
-   sleep 5; lsof /dev/cu.usbserial-*      # no output = free
-   ```
+```bash
+tools/dev.sh flash
+```
 
-   `bootout` returns before the process is gone, and on 2026-10-15 the process
-   outlived an unloaded job and kept the port. If `lsof` still lists `blink`,
-   stop that pid before going on; `dev.sh` only stops its own bridge.
-2. **Pick the panel batch.** Production units and the two pilot boards carry
-   different display modules. A production build on a pilot panel comes out
-   mirrored, red and blue swapped, and dim; the reverse is wrong too
-   (`BLINK_PANEL_PILOT` in `firmware/Kconfig`). The fuse state does not tell
-   you which one you have. If the picture is mirrored, use `PILOT=1`.
-   Do **not** change `rotation` in the overlay to fix it: 90 and 270 differ by
-   a 180 degree turn and neither un-mirrors, and touch is solved against 90.
-3. **Flash:**
+It stops the installed daemon (the launchd job and, if it outlives the job, its
+process), reads `FLASH_CRYPT_CNT` and refuses a fused chip, builds, flashes at
+115200, and puts the installed daemon back, even on Ctrl-C. Nothing is run by
+hand around it. `PORT=/dev/cu.usbserial-XXXX` names the board when more than one
+is attached; the default is the first `/dev/cu.usbserial*`.
 
-   ```bash
-   PILOT=1 PORT=/dev/cu.usbserial-XXXX tools/dev.sh flash   # pilot panel
-   PORT=/dev/cu.usbserial-XXXX tools/dev.sh flash           # production panel
-   ```
+The build is the **pilot-panel** one by default (`firmware/pilot.conf`), because
+that is what the bench board needs. Production units and the pilot boards carry
+different display modules: production firmware on a pilot panel comes out
+mirrored, red and blue swapped, and dim, and the reverse is wrong too
+(`BLINK_PANEL_PILOT` in `firmware/Kconfig`). A board with a production panel:
+`PILOT=0 tools/dev.sh flash`. Shipped units are built by `burn.sh`, which this
+default does not touch. The fuse state does not say which panel a board has. If
+the picture is mirrored, flash again with the other value; do **not** change
+`rotation` in the overlay, because 90 and 270 differ by a 180 degree turn and
+neither un-mirrors, and touch is solved against 90.
 
-   `PORT` defaults to the first `/dev/cu.usbserial*`. It reads
-   `FLASH_CRYPT_CNT` first and refuses a fused chip. `BLINK_SKIP_EFUSE_CHECK=1`
-   overrides that, and should not be used: a plaintext image on a fused chip
-   will not boot.
-4. **Put the daemon back.** `dev.sh` leaves its own bridge on the port:
+`BLINK_SKIP_EFUSE_CHECK=1` overrides the fuse check and should not be used: a
+plaintext image on a fused chip will not boot.
 
-   ```bash
-   tools/dev.sh down
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.blink.bridge.plist
-   launchctl kickstart -k gui/$(id -u)/com.blink.bridge
-   ```
+Then **look at the board**: orientation, no mirror, red and blue the right way
+round, touch landing where you press, still alive after 90 seconds. `dev.sh`
+prints that reminder at the end. Done means flashed and seen, not built.
 
-   `bootstrap` registers the job without starting it; `kickstart -k` starts it.
-5. **Look at the board.** Orientation, no mirror, red and blue the right way
-   round, and touch landing where you press. Done means flashed and seen, not
-   built.
+If something other than the Blink daemon holds the port, `dev.sh` says what and
+stops; it never kills a process it does not recognise.
 
 `dev.sh` builds without MCUboot, so a board flashed this way is not updatable
 over the air until it is re-flashed with `tools/burn.sh` (**unverified** on this

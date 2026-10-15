@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 # Dev loop for the CYD board.
 #
-#   tools/dev.sh flash   -- stop daemon, build, flash, restart daemon
-#                           (PILOT=1 for a pilot-panel board)
+#   tools/dev.sh flash   -- THE way to flash a bench board: stop the installed
+#                           daemon, check the chip is not fused, build, flash,
+#                           put the installed daemon back
 #   tools/dev.sh up      -- start the daemon in the background
 #   tools/dev.sh down    -- stop the daemon (frees the port)
 #   tools/dev.sh log     -- tail the daemon log
 #
 # Only ONE process may own the serial port, so the daemon must be down while
-# esptool talks to the board. `flash` sequences that for you.
+# esptool talks to the board. `flash` sequences that for you, including the
+# launchd job installed by `blink install` (the same stop and restore as
+# burn.sh), so there is nothing to run by hand around it.
+#
+# The build is the PILOT-panel one by default, because that is what the bench
+# board needs (production firmware on it came out mirrored, 2026-10-15). A
+# board with a production panel: PILOT=0 tools/dev.sh flash. Shipped units are
+# built by burn.sh and are not affected by this default.
 set -euo pipefail
 
 PORT="${PORT:-$(ls /dev/cu.usbserial* 2>/dev/null | head -1 || true)}"
@@ -37,6 +45,58 @@ down() {
 	fi
 }
 
+AGENT="gui/$(id -u)/com.blink.bridge"
+DAEMON_WAS_UP=0
+
+# Stops the installed daemon: the launchd job, and then whatever is still on the
+# port. bootout RETURNS before the process is gone, and on 2026-10-15 the process
+# outlived an unloaded job and kept the port, which read as "cannot tell whether
+# this chip is fused -- is the port free?" because lib_efuse.sh discards
+# espefuse's own error. Only the Blink daemon is stopped; anything else on the
+# port is somebody else's and is reported, not killed.
+stop_installed() {
+	local pid cmd i
+	if launchctl print "$AGENT" >/dev/null 2>&1; then
+		DAEMON_WAS_UP=1
+		launchctl bootout "$AGENT" >/dev/null 2>&1 || true
+		for i in $(seq 1 20); do
+			launchctl print "$AGENT" >/dev/null 2>&1 || break
+			sleep 0.25
+		done
+	fi
+	for pid in $(lsof -t "$PORT" 2>/dev/null || true); do
+		cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+		case "$cmd" in
+		*/.blink/bin/blink*)
+			DAEMON_WAS_UP=1
+			echo "stopping the installed daemon (pid $pid)"
+			kill "$pid" 2>/dev/null || true
+			;;
+		*)
+			echo "FATAL: $PORT is held by pid $pid ($cmd), which is not the Blink daemon." >&2
+			echo "       Stop it yourself and run this again." >&2
+			exit 1
+			;;
+		esac
+	done
+	for i in $(seq 1 40); do
+		lsof "$PORT" >/dev/null 2>&1 || return 0
+		sleep 0.25
+	done
+	echo "FATAL: $PORT is still held after 10 s:" >&2
+	lsof "$PORT" >&2 || true
+	exit 1
+}
+
+# bootstrap REGISTERS the job; it does not start it. kickstart -k does.
+restore_installed() {
+	[ "$DAEMON_WAS_UP" = 1 ] || return 0
+	launchctl bootstrap "gui/$(id -u)" \
+		"$HOME/Library/LaunchAgents/com.blink.bridge.plist" >/dev/null 2>&1 || true
+	launchctl kickstart -k "$AGENT" >/dev/null 2>&1 || true
+	echo "installed daemon put back"
+}
+
 up() {
 	activate
 	cd "$ROOT"
@@ -49,7 +109,11 @@ up() {
 
 case "${1:-flash}" in
 flash)
-	down
+	down >/dev/null
+	stop_installed
+	# Put back on the way out whatever happens, a Ctrl-C mid-flash included.
+	trap restore_installed EXIT
+	trap 'exit 130' INT TERM
 	# dev.sh writes PLAINTEXT. A fused chip's ROM cannot read that, and the
 	# board goes dark until tools/flash_encrypted.sh restores it -- the exact
 	# mirror of the mistake that script refuses. Ask the chip, before the build.
@@ -91,28 +155,34 @@ flash)
 	fi
 	activate   # sources zephyr-env.sh too
 	cd "$ROOT/firmware"
-	# PILOT=1 builds for the two pilot panels (firmware/pilot.conf). Always
-	# passed, empty when unset: EXTRA_CONF_FILE is cached in the build
+	# The pilot-panel build (firmware/pilot.conf) unless PILOT=0. Always
+	# passed, empty for production: EXTRA_CONF_FILE is cached in the build
 	# directory, so a pilot build followed by a plain one would otherwise stay
 	# a pilot build. A production firmware on a pilot panel (or the reverse)
 	# renders mirrored, red/blue swapped and dim -- see BLINK_PANEL_PILOT.
+	PILOT="${PILOT:-1}"
+	panel_conf=""
+	if [ "$PILOT" = 1 ]; then
+		panel_conf="pilot.conf"
+	fi
 	west build -b "$BOARD" . -- -DUSE_CCACHE=0 \
-		-DEXTRA_CONF_FILE="${PILOT:+pilot.conf}" | tail -3
+		-DEXTRA_CONF_FILE="$panel_conf" | tail -3
 	# 921600 is beyond what this board's CH340 tolerates; it fails mid-write.
 	west flash --esp-device "$PORT" --esp-baud-rate 115200 | tail -1
-	up
+	# The installed daemon comes back on EXIT. Only a machine that had none
+	# gets the throwaway one from `up`, so two never share a port.
+	if [ "$DAEMON_WAS_UP" = 0 ]; then
+		up
+	fi
 	# A reminder, never a gate: nothing here can see the screen, and a flash that
 	# "worked" has come out mirrored before (2026-10-15, production build on a
 	# pilot panel). It names the build so the answer points at the fix.
 	cat <<EOF
 
-Flashed a $([ -n "${PILOT:-}" ] && echo PILOT || echo PRODUCTION)-panel build. Now look at the board:
-  - mirrored, or red/blue swapped, or dim?  Rebuild with$([ -n "${PILOT:-}" ] && echo "out PILOT=1" || echo " PILOT=1"); do not change 'rotation'.
+Flashed a $([ -n "$panel_conf" ] && echo PILOT || echo PRODUCTION)-panel build. Now look at the board:
+  - mirrored, or red/blue swapped, or dim?  Flash again with PILOT=$([ -n "$panel_conf" ] && echo 0 || echo 1); do not change 'rotation'.
   - touch lands where you press?
   - still alive after 90 s?  (unconfirmed images revert at about 90 s)
-Put the installed daemon back when done: tools/dev.sh down, then
-  launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.blink.bridge.plist
-  launchctl kickstart -k gui/\$(id -u)/com.blink.bridge
 EOF
 	;;
 up) down; up ;;

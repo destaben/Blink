@@ -111,10 +111,12 @@ blue the right way round, touch landing where pressed. A model cannot see the
 screen, so it asks.
 
 **A bench board is flashed with `tools/dev.sh flash`, never `burn.sh`.**
-`burn.sh` stamps the edition and the stamp is write-once. Pilot panels need
-`PILOT=1`; a production build on one renders mirrored, red/blue swapped and
-dim, and no `rotation` value fixes that (`firmware/src/main.c:55-58`). The step
-by step is in `docs/README-full.md`, "Flashing a bench board".
+`burn.sh` stamps the edition and the stamp is write-once. `dev.sh flash` is the
+one command: it stops and restores the installed daemon itself and builds for
+the pilot panel by default (`PILOT=0` for a production panel); a production build
+on a pilot panel renders mirrored, red/blue swapped and dim, and no `rotation`
+value fixes that (`firmware/src/main.c:55-58`). See `docs/README-full.md`,
+"Flashing a bench board".
 
 `tools/burn.sh` is the reference for stopping and restoring the daemon around a
 flash. Note that `launchctl bootstrap` registers a job without starting it; a
