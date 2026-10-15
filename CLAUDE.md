@@ -106,7 +106,15 @@ loop. Sign with `tools/sign_confirmed.py` (`imgtool sign --pad --confirm`);
 `burn.sh` already does.
 
 Firmware work is **not done when it builds** — done means flashed to a board
-and boot-verified.
+and boot-verified, and someone has looked at it: orientation, no mirror, red and
+blue the right way round, touch landing where pressed. A model cannot see the
+screen, so it asks.
+
+**A bench board is flashed with `tools/dev.sh flash`, never `burn.sh`.**
+`burn.sh` stamps the edition and the stamp is write-once. Pilot panels need
+`PILOT=1`; a production build on one renders mirrored, red/blue swapped and
+dim, and no `rotation` value fixes that (`firmware/src/main.c:55-58`). The step
+by step is in `docs/README-full.md`, "Flashing a bench board".
 
 `tools/burn.sh` is the reference for stopping and restoring the daemon around a
 flash. Note that `launchctl bootstrap` registers a job without starting it; a

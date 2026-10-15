@@ -101,6 +101,19 @@ flash)
 	# 921600 is beyond what this board's CH340 tolerates; it fails mid-write.
 	west flash --esp-device "$PORT" --esp-baud-rate 115200 | tail -1
 	up
+	# A reminder, never a gate: nothing here can see the screen, and a flash that
+	# "worked" has come out mirrored before (2026-10-15, production build on a
+	# pilot panel). It names the build so the answer points at the fix.
+	cat <<EOF
+
+Flashed a $([ -n "${PILOT:-}" ] && echo PILOT || echo PRODUCTION)-panel build. Now look at the board:
+  - mirrored, or red/blue swapped, or dim?  Rebuild with$([ -n "${PILOT:-}" ] && echo "out PILOT=1" || echo " PILOT=1"); do not change 'rotation'.
+  - touch lands where you press?
+  - still alive after 90 s?  (unconfirmed images revert at about 90 s)
+Put the installed daemon back when done: tools/dev.sh down, then
+  launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.blink.bridge.plist
+  launchctl kickstart -k gui/\$(id -u)/com.blink.bridge
+EOF
 	;;
 up) down; up ;;
 down) down; echo "daemon down, $PORT free" ;;
