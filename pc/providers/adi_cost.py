@@ -147,6 +147,10 @@ class AdiCostProvider(ProviderParser):
             weekly_pct=pct,
             weekly_resets_at=next_month_start(now_epoch),
             cost_dials=2,
+            # Past the budget the percentage only says how far. The budget is
+            # raised on request and nothing readable carries it, so once it
+            # is crossed the board is also told the dollars themselves.
+            weekly_usd=int(round(spend)) if spend >= self._limit else 0,
             stale=(now_epoch - read_at) > STALE_AFTER_S,
         )
 

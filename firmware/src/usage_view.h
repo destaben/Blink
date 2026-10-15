@@ -241,6 +241,11 @@ void usage_view_set_provider1(const char *tag);
  * Called with every usage message; an absent key is 0, a plan account. */
 void usage_view_set_cost_dials(int dials);
 
+/* Dollars spent this month on a spend MONTH dial, drawn beside the
+ * dial name once the percentage passes 100. 0 when the daemon does not send it, which
+ * is every message under budget and every plan account. */
+void usage_view_set_weekly_usd(int usd);
+
 /*
  * The FIRST provider's own age, which is what the `stale` flag on the wire has
  * always meant. Recorded per page so the hint can ask about the page being

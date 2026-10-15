@@ -40,9 +40,30 @@ def test_frame_percentage_against_the_default_limit():
     f = _provider(lambda argv: OUT).parse_output(OUT, NOW)
     assert f.provider == "claude"
     assert f.src == "adi-cost"
-    assert round(f.weekly_pct, 2) == 94.09
+    assert round(f.weekly_pct, 2) == 94.09  # 235.22 / 250
+    assert f.weekly_usd == 0  # under budget: the percentage is the answer
     assert f.session_pct == -1.0
     assert f.has_usage()
+
+
+def test_past_the_budget_the_frame_also_carries_the_dollars():
+    over = "\u2714 $531.40 spent so far this month (2026-10)\n"
+    f = _provider(lambda argv: over).parse_output(over, NOW)
+    assert round(f.weekly_pct, 1) == 212.6  # 531.40 / 250
+    assert f.weekly_usd == 531
+
+
+def test_exactly_at_the_budget_counts_as_past_it():
+    at = "\u2714 $250.00 spent so far this month (2026-10)\n"
+    f = _provider(lambda argv: at).parse_output(at, NOW)
+    assert f.weekly_pct == 100.0 and f.weekly_usd == 250
+
+
+def test_the_budget_can_be_raised_by_environment(monkeypatch):
+    monkeypatch.setenv("BLINK_COST_LIMIT_USD", "750")
+    over = "\u2714 $531.40 spent so far this month (2026-10)\n"
+    f = _provider(lambda argv: over).parse_output(over, NOW)
+    assert round(f.weekly_pct, 1) == 70.9 and f.weekly_usd == 0
 
 
 def test_reset_is_the_first_of_next_month():
@@ -174,3 +195,14 @@ def test_merged_frame_marks_exactly_the_spend_dials():
     assert merged.cost_dials == 2
     # nothing but plan frames: plan account, nothing marked
     assert normalizer.merge([plan]).cost_dials == 0
+
+
+def test_merge_carries_the_dollars_to_the_wire():
+    from pc import normalizer, protocol
+    over = "✔ $531.40 spent so far this month (2026-10)\n"
+    merged = normalizer.merge([_plan_frame(42.0),
+                               _provider(lambda argv: over).parse_output(over, NOW)])
+    assert merged.weekly_usd == 531
+    assert protocol.frame_to_usage(merged, NOW)["usd"] == 531
+    # A plan account never sends it.
+    assert normalizer.merge([_plan_frame(42.0)]).weekly_usd == 0

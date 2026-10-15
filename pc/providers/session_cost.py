@@ -1,33 +1,42 @@
-"""Cost of the current Claude Code session, as a share of the monthly budget.
+"""Today's Claude Code spend, as a share of the daily dollar limit.
 
-Claude Code hands the session cost only to the status line command. On an
-account where that command is managed by the company, nothing else sees it, so
-this provider rebuilds an ESTIMATE from the session's own transcript: every
-assistant message in ~/.claude/projects/<project>/<session>.jsonl carries the
-tokens it used, and the sum of tokens x price is the cost.
+The company gateway caps spend at a fixed amount per day, and that cap is used
+up by every session of the day together, not by the one in front of you. So the
+left dial counts the whole day: the cost of every assistant message written
+today, across all the open and closed sessions, over the limit. It starts the
+day at 0 and only climbs until local midnight, which is also when its countdown
+ends.
+
+Claude Code hands the cost only to the status line command. On an account where
+that command is managed by the company, nothing else sees it, so this provider
+rebuilds an ESTIMATE from the transcripts: every assistant message in
+~/.claude/projects/<project>/<session>.jsonl carries the tokens it used and a
+timestamp, and the sum of tokens x price over today's messages is the cost.
+Nothing is kept between runs: on a restart the day is rebuilt from the files,
+so the count survives the daemon.
 
 It is an estimate and says so: the prices are Claude Code's own table, which
 is not published, so the defaults below were fitted against two status-line
 readings from a real session (ctx 18% -> $2.79, ctx 24% -> $5.90) and land
 within roughly 10% of them. Override with BLINK_SESSION_RATES when the real
-prices are known. Subagent transcripts are not summed, so a session that
-leans on subagents reads low.
+prices are known. It also only sees this machine, and subagent transcripts are
+not summed, so a day that leans on subagents or on another machine reads low.
+`adi-aie user-cost --daily` is the billed figure, but billing can lag by up to
+24 hours, which is useless for watching a day fill up.
 
-The dial is the session's cost divided by the monthly budget, the same budget
-the monthly dial uses, so "2%" on the session dial means this session has used
-2% of the month's allowance.
-
-"Current session" is the transcript written to most recently. With several
-sessions open it follows whichever spoke last, which is also the one a person
-is looking at.
+A message's own timestamp decides which day it belongs to, not the file's:
+a session left open past midnight keeps writing to the same file, and yester-
+day's half of it must not count against today. A message with no timestamp
+counts as today when its file was written today.
 
 Configuration, all optional (the daemon runs under launchd with no shell env):
 
-    BLINK_COST_LIMIT_USD    budget in dollars                  (default 250)
+    BLINK_DAILY_LIMIT_USD   daily limit in dollars            (default 30)
     BLINK_SESSION_RATES     "input,output,cache_read,cache_write" in USD per
                             million tokens        (default 3,15,0.18,3.75)
     BLINK_CLAUDE_PROJECTS   transcripts root (default ~/.claude/projects)
 """
+import datetime
 import glob
 import json
 import os
@@ -41,10 +50,8 @@ from pc.providers.base import NormalizedUsageFrame, ProviderParser
 PROVIDER_ID = "claude"
 SRC_ID = "session-cost"
 
-DEFAULT_LIMIT_USD = 250.0
+DEFAULT_LIMIT_USD = 30.0
 DEFAULT_RATES = (3.0, 15.0, 0.18, 3.75)
-# A transcript untouched for this long is not "the current session".
-ACTIVE_WINDOW_S = 30 * 60.0
 REFRESH_S = 5.0
 
 
@@ -64,6 +71,34 @@ def _rates():
         return DEFAULT_RATES
     return parts if len(parts) == 4 and all(p >= 0 for p in parts) \
         else DEFAULT_RATES
+
+
+def day_start(now_epoch):
+    """Epoch of 00:00 local time on the day containing `now_epoch`."""
+    d = datetime.datetime.fromtimestamp(now_epoch)
+    return datetime.datetime(d.year, d.month, d.day).timestamp()
+
+
+def next_day_start(now_epoch):
+    """Epoch of 00:00 local time on the next day.
+
+    Added to the calendar date rather than as 86400 s, so a day with a clock
+    change still ends at midnight.
+    """
+    d = datetime.datetime.fromtimestamp(now_epoch)
+    return (datetime.datetime(d.year, d.month, d.day)
+            + datetime.timedelta(days=1)).timestamp()
+
+
+def _epoch(stamp):
+    """Epoch of a transcript's ISO-8601 `timestamp`, or None."""
+    if not isinstance(stamp, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(
+            stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def usage_cost(usage, rates):
@@ -87,9 +122,9 @@ class _Transcript:
 
     def __init__(self):
         self.offset = 0
-        self.size = 0
-        # message id -> usage. The transcript logs a message more than once
-        # while it streams, and the last write is the complete one.
+        # message id -> (epoch or None, usage). The transcript logs a message
+        # more than once while it streams, and the last write is the complete
+        # one.
         self.usage = {}
 
     def advance(self, path):
@@ -110,11 +145,14 @@ class _Transcript:
                 continue
             u = m.get("usage")
             if isinstance(u, dict):
-                self.usage[m.get("id") or d.get("uuid") or len(self.usage)] = u
+                key = m.get("id") or d.get("uuid") or len(self.usage)
+                self.usage[key] = (_epoch(d.get("timestamp")), u)
         self.offset += end
 
-    def cost(self, rates):
-        return sum(usage_cost(u, rates) for u in self.usage.values())
+    def cost(self, rates, since=0.0):
+        """Dollars for the messages written at or after `since`."""
+        return sum(usage_cost(u, rates) for t, u in self.usage.values()
+                   if t is None or t >= since)
 
 
 class SessionCostProvider(ProviderParser):
@@ -124,44 +162,52 @@ class SessionCostProvider(ProviderParser):
         self._now = now
         self._root = root or os.environ.get("BLINK_CLAUDE_PROJECTS") or \
             os.path.expanduser("~/.claude/projects")
-        self._limit = _env_float("BLINK_COST_LIMIT_USD", DEFAULT_LIMIT_USD)
+        self._limit = _env_float("BLINK_DAILY_LIMIT_USD", DEFAULT_LIMIT_USD)
         self._rates = _rates()
         self._lock = threading.Lock()
         self._reader = {}      # path -> _Transcript
         self._cost = None
-        self._mtime = None
+        self._day = None       # the day_start the cost was computed for
+        self._read_at = None
         self._next_try = 0.0
         self._busy = False
+        self._complained = False
 
     def get_provider_id(self) -> str:
         return PROVIDER_ID
 
-    def _newest(self):
-        best, best_m = None, -1.0
-        for p in glob.glob(os.path.join(self._root, "*", "*.jsonl")):
-            try:
-                m = os.path.getmtime(p)
-            except OSError:
-                continue
-            if m > best_m:
-                best, best_m = p, m
-        return best, best_m
-
     def _refresh(self):
         try:
-            path, mtime = self._newest()
-            if path is None:
+            now = self._now()
+            start = day_start(now)
+            paths = glob.glob(os.path.join(self._root, "*", "*.jsonl"))
+            if not paths:
                 with self._lock:
                     self._cost = None
                 return
-            reader = self._reader.setdefault(path, _Transcript())
-            reader.advance(path)
+            total = 0.0
+            live = set()
+            for p in paths:
+                try:
+                    # A file untouched since before midnight cannot hold a
+                    # message from today, so it is never even opened.
+                    if os.path.getmtime(p) < start:
+                        continue
+                    reader = self._reader.setdefault(p, _Transcript())
+                    reader.advance(p)
+                except OSError as e:
+                    if not self._complained:
+                        print(f"[session-cost] cannot read transcript: {e}",
+                              file=sys.stderr)
+                        self._complained = True
+                    continue
+                live.add(p)
+                total += reader.cost(self._rates, start)
+            # Yesterday's files are not needed again; do not hold them.
+            for p in [p for p in self._reader if p not in live]:
+                del self._reader[p]
             with self._lock:
-                self._cost = reader.cost(self._rates)
-                self._mtime = mtime
-        except OSError as e:
-            print(f"[session-cost] cannot read transcript: {e}",
-                  file=sys.stderr)
+                self._cost, self._day, self._read_at = total, start, now
         finally:
             with self._lock:
                 self._busy = False
@@ -173,17 +219,21 @@ class SessionCostProvider(ProviderParser):
             if start:
                 self._busy = True
                 self._next_try = now_epoch + REFRESH_S
-            cost, mtime = self._cost, self._mtime
+            cost, day, read_at = self._cost, self._day, self._read_at
         if start:
             threading.Thread(target=self._refresh, name="session-cost",
                              daemon=True).start()
-        if cost is None or mtime is None:
+        if cost is None or day is None:
             return []
-        if now_epoch - mtime > ACTIVE_WINDOW_S:
+        # Past midnight the figure still describes yesterday until the next
+        # refresh lands a few seconds later; showing it against today's
+        # countdown would be a confident wrong number.
+        if day != day_start(now_epoch):
             return []
         pct = cost / self._limit * 100.0
         if not (0 <= pct <= 1000):
             return []
         return [NormalizedUsageFrame(
-            provider=PROVIDER_ID, src=SRC_ID, observed_at=mtime,
-            session_pct=pct, weekly_pct=base.UNKNOWN, cost_dials=1)]
+            provider=PROVIDER_ID, src=SRC_ID, observed_at=read_at,
+            session_pct=pct, session_resets_at=next_day_start(now_epoch),
+            weekly_pct=base.UNKNOWN, cost_dials=1)]

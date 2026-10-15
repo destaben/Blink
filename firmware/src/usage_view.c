@@ -170,6 +170,13 @@ static enum usage_activity activity = USAGE_ACTIVITY_NONE;
 static lv_obj_t *toast;
 static lv_obj_t *toast_lbl;
 static int toast_ttl;			/* seconds left; 0 = not showing */
+
+/* The frame round the panel that blinks while a person is wanted. See
+ * struct usage_alert in usage_state.h for when, and why a tap only silences. */
+enum alert_mode { ALERT_NONE, ALERT_ATTENTION, ALERT_FLASH };
+static lv_obj_t *alert_frame;
+static enum alert_mode alert_mode;
+static struct usage_alert alert;
 static struct usage_counts toast_prev;
 static bool toast_have_prev;
 static bool sleeping;
@@ -180,10 +187,13 @@ static char provider1_tag[12];	/* whichever provider the daemon made primary */
  * daemon's "cd" bitmask: 1 = session, 2 = weekly. 0, and the default when the
  * key is absent, is a plan account: SESSION 5h and WEEKLY 7d. */
 static int cost_dials;
+/* Dollars spent this month, sent only once spend is past the budget (see
+ * usage_view_set_weekly_usd()). 0 is "not sent", not "nothing spent". */
+static int weekly_usd;
 
 static const char *session_dial_name(void)
 {
-	return (cost_dials & 1) ? "SESSION" : "SESSION 5h";
+	return (cost_dials & 1) ? "TODAY" : "SESSION 5h";
 }
 
 static const char *weekly_dial_name(void)
@@ -312,6 +322,7 @@ static void render_age(void);
 /* Defined beside pip_colour(), which it borrows; called from the 1 s tick,
  * which runs earlier in this file. */
 static void toast_hide(void);
+static void alert_ack_cb(lv_event_t *e);
 #if HAVE_PER_MODEL
 static void peek_fill(void);
 #endif
@@ -559,6 +570,18 @@ static void render_weekly(void)
 	char buf[8];
 
 	snprintf(buf, sizeof(buf), "%d%%", (int)pct_int(pct));
+	if ((cost_dials & 2) && weekly_usd > 0 && pct >= 100.0) {
+		/* Past the budget the ring is full and the percentage says only
+		 * how far; what the owner wants to know is how much money has
+		 * gone. The dollars go in the caption so the big figure keeps
+		 * its width: "MONTH $99999" is 12 characters against the 9 of
+		 * "WEEKLY 7d". */
+		char cap[20];
+
+		snprintf(cap, sizeof(cap), "%s $%d", weekly_dial_name(),
+			 weekly_usd);
+		lv_label_set_text(weekly.name, cap);
+	}
 	lv_label_set_text(weekly.pct, buf);
 	lv_arc_set_value(weekly.arc, arc_value(pct));
 	lv_obj_set_style_arc_color(weekly.arc, severity(pct), LV_PART_INDICATOR);
@@ -662,6 +685,10 @@ void usage_view_deinit(void)
 	toast = NULL;
 	toast_lbl = NULL;
 	toast_ttl = 0;
+	/* Dies with gauge_scr, animation included. alert.acked is kept: a
+	 * prompt silenced before a trip into settings is the same prompt after. */
+	alert_frame = NULL;
+	alert_mode = ALERT_NONE;
 	/*
 	 * The comparison baseline goes too. The screen being torn down means
 	 * the setup screen is coming up, and whatever the counts are when the
@@ -969,6 +996,27 @@ void usage_view_init(void)
 	lv_obj_add_flag(toast, LV_OBJ_FLAG_GESTURE_BUBBLE);
 	lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -TOAST_BOTTOM_OFF);
 	lv_obj_add_flag(toast, LV_OBJ_FLAG_HIDDEN);
+
+	/*
+	 * The alert frame: the whole panel, transparent, with only its border
+	 * drawn. Not clickable and gestures bubble through it, so it never
+	 * swallows a swipe to settings; the tap that silences it is taken from
+	 * the screen itself below. Above the gauges and the toast, under the
+	 * CONNECTING takeover created after it.
+	 */
+	alert_frame = lv_obj_create(scr);
+	lv_obj_set_size(alert_frame, LV_PCT(100), LV_PCT(100));
+	lv_obj_align(alert_frame, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_set_style_bg_opa(alert_frame, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_radius(alert_frame, 0, 0);
+	lv_obj_set_style_border_width(alert_frame, 6, 0);
+	lv_obj_set_style_border_opa(alert_frame, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_pad_all(alert_frame, 0, 0);
+	lv_obj_clear_flag(alert_frame, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_clear_flag(alert_frame, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_flag(alert_frame, LV_OBJ_FLAG_GESTURE_BUBBLE);
+	lv_obj_add_flag(alert_frame, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_add_event_cb(scr, alert_ack_cb, LV_EVENT_CLICKED, NULL);
 
 	toast_lbl = lv_label_create(toast);
 	lv_label_set_text(toast_lbl, "");
@@ -1909,6 +1957,76 @@ static void toast_show(enum fmt_pip_kind kind, const char *text)
 	toast_ttl = TOAST_TTL_S;
 }
 
+static void alert_anim_cb(void *obj, int32_t v)
+{
+	lv_obj_set_style_border_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
+}
+
+static void alert_flash_done(lv_anim_t *a)
+{
+	ARG_UNUSED(a);
+	/* Only the short flash ends on its own; an attention blink is stopped
+	 * by alert_show(). */
+	if (alert_frame && alert_mode == ALERT_FLASH) {
+		lv_obj_add_flag(alert_frame, LV_OBJ_FLAG_HIDDEN);
+		alert_mode = ALERT_NONE;
+	}
+}
+
+/*
+ * ATTENTION: red, blinks until stopped -- a prompt is open or a turn failed.
+ * FLASH: amber, three blinks and done -- a session finished, which wants
+ * nothing and is announced once.
+ *
+ * A request for the mode already running is a no-op, so the daemon's poll
+ * every minute does not restart the animation under somebody's eyes.
+ */
+static void alert_show(enum alert_mode m)
+{
+	if (!alert_frame || m == alert_mode) {
+		return;
+	}
+	lv_anim_delete(alert_frame, alert_anim_cb);
+	alert_mode = m;
+	if (m == ALERT_NONE) {
+		lv_obj_add_flag(alert_frame, LV_OBJ_FLAG_HIDDEN);
+		return;
+	}
+	lv_obj_set_style_border_color(alert_frame,
+				      m == ALERT_ATTENTION ? COL_RED : COL_AMBER,
+				      0);
+	lv_obj_set_style_border_opa(alert_frame, LV_OPA_TRANSP, 0);
+	lv_obj_clear_flag(alert_frame, LV_OBJ_FLAG_HIDDEN);
+
+	lv_anim_t a;
+
+	lv_anim_init(&a);
+	lv_anim_set_var(&a, alert_frame);
+	lv_anim_set_exec_cb(&a, alert_anim_cb);
+	lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+	lv_anim_set_duration(&a, 450);
+	lv_anim_set_playback_duration(&a, 450);
+	if (m == ALERT_ATTENTION) {
+		lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+	} else {
+		lv_anim_set_repeat_count(&a, 3);
+		lv_anim_set_completed_cb(&a, alert_flash_done);
+	}
+	lv_anim_start(&a);
+}
+
+/* Any tap on the panel while it blinks silences it. The pip and the line
+ * stay: this stops the shouting, it does not claim the prompt was dealt
+ * with. */
+static void alert_ack_cb(lv_event_t *e)
+{
+	ARG_UNUSED(e);
+	if (alert_mode == ALERT_ATTENTION) {
+		usage_alert_ack(&alert);
+		alert_show(ALERT_NONE);
+	}
+}
+
 /*
  * New counts: is there anything to announce, and may it be shown?
  *
@@ -1932,10 +2050,26 @@ static void toast_consider(int n_sess, int n_run, int n_wait, int n_stuck)
 	struct usage_counts now = { n_sess, n_run, n_wait, n_stuck };
 	struct usage_toast t;
 	char text[FMT_TOAST_MAX];
+	const struct usage_counts *prev = toast_have_prev ? &toast_prev : NULL;
+	const bool changed = usage_toast_change(prev, &now, activity, &t);
+	const bool blink = usage_alert_update(&alert, prev, &now);
+	const bool shown = !sleeping && !usage_view_takeover_active();
 
-	if (usage_toast_change(toast_have_prev ? &toast_prev : NULL, &now,
-			       activity, &t) &&
-	    !sleeping && !usage_view_takeover_active()) {
+	/* The blinking frame is state, not news, so it is re-decided on every
+	 * poll rather than only on a change -- and it goes out with the eyes
+	 * (sleeping) or under the CONNECTING screen, then comes back on the
+	 * next poll if the prompt is still open. */
+	if (shown && blink) {
+		alert_show(ALERT_ATTENTION);
+	} else if (alert_mode == ALERT_ATTENTION) {
+		alert_show(ALERT_NONE);
+	}
+	if (shown && changed && t.kind == FMT_PIP_FINISHED &&
+	    alert_mode == ALERT_NONE) {
+		alert_show(ALERT_FLASH);
+	}
+
+	if (changed && shown) {
 		/*
 		 * The label only when usage_toast_change() says it belongs to
 		 * the state that changed -- the daemon picks it for the WORST
@@ -2235,6 +2369,7 @@ void usage_view_set_sleeping(bool s)
 		 * just happened.
 		 */
 		toast_hide();
+		alert_show(ALERT_NONE);
 	}
 }
 
@@ -2379,6 +2514,20 @@ void usage_view_set_cost_dials(int dials)
 		lv_label_set_text(session.name, session_dial_name());
 		render_weekly();
 		refresh_provider1();
+	}
+}
+
+void usage_view_set_weekly_usd(int usd)
+{
+	if (usd < 0) {
+		usd = 0;
+	}
+	if (usd == weekly_usd) {
+		return;
+	}
+	weekly_usd = usd;
+	if (built) {
+		render_weekly();
 	}
 }
 

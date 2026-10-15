@@ -162,6 +162,29 @@ def welcome(app: str, app_ver: str) -> dict:
     return {"t": "welcome", "v": VERSION, "app": app, "app_ver": app_ver}
 
 
+def approve_req(req_id: str, tool: str, text: str, ttl_s: int) -> dict:
+    """Ask the board to show a permission request and take a tap as the answer.
+
+    KEY ORDER IS PART OF THE FORMAT. `text` is last, because the board looks
+    keys up by name in the raw line and the text is the one value somebody
+    other than this program wrote. Every other key is found before the free
+    text can be mistaken for one (firmware/src/msg_parse.c treats a match as
+    a key only when a colon follows it, and inner quotes are escaped, so the
+    order is a second line of defence rather than the only one).
+
+    The caller has already established that `text` is displayable whole
+    (pc/approvals.displayable); this does not truncate. A request that does
+    not fit is not sent at all -- see Approvals._offer.
+    """
+    return {"t": "approve_req", "v": VERSION, "id": req_id, "tool": tool,
+            "ttl": int(ttl_s), "cmd": text}
+
+
+def approve_end(req_id: str) -> dict:
+    """Withdraw a request: it was answered at the computer, or given up on."""
+    return {"t": "approve_end", "v": VERSION, "id": req_id}
+
+
 def bye() -> dict:
     """The app is going on purpose (uninstall). Without it a computer with
     no app any more looks exactly like a sleeping one, and the board would
@@ -210,7 +233,7 @@ def usage(session_pct, session_resets_at, weekly_pct, weekly_resets_at, models,
           n_agents=0, p2="", p2_session_pct=UNKNOWN,
           p2_weekly_pct=UNKNOWN, p2_session_resets_in_s=-1,
           p2_weekly_resets_in_s=-1, p2_stale=False, burn_pph=None,
-          age_s=-1, p2_age_s=-1, active_age_s=-1) -> dict:
+          age_s=-1, p2_age_s=-1, active_age_s=-1, weekly_usd=0) -> dict:
     """A usage message.
 
     The *_resets_in_s fields carry the remaining seconds. The board has no
@@ -340,6 +363,11 @@ The firmware reads this field: proto.c's "usage" handler calls
     # do not grow by a byte. The board defaults an absent key to 0.
     if cost_dials:
         extra["cd"] = int(cost_dials)
+    # Dollars spent this month, only once a spend account is past its budget.
+    # Absent on every other line, so the widest line the daemon builds today
+    # does not grow; see tests/pc/test_protocol.py for the worst case with it.
+    if weekly_usd and weekly_usd > 0:
+        extra["usd"] = int(weekly_usd)
     if state:
         extra["state"] = state
 
@@ -519,6 +547,7 @@ def frame_to_usage(frame, now_epoch: float, secondary=None) -> dict:
         stale=frame.stale,
         provider=frame.provider, src=frame.src,
         cost_dials=frame.cost_dials,
+        weekly_usd=frame.weekly_usd,
         # One light for the whole desk: the worse of the two providers'
         # states, and the counts of both. The light is a claim on the person
         # ("something needs you"), and a Codex session waiting on them is

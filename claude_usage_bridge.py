@@ -18,6 +18,7 @@ from pc import ota as ota_mod
 from pc import (ingest, install_statusline, logbook, protocol,
                 statusline_source, update, win_driver)
 from pc.version import RELEASE_VERSION
+from pc.approvals import Approvals
 from pc.bridge import Bridge
 
 POLL_INTERVAL_S = 60
@@ -1033,6 +1034,12 @@ def main(argv=None):
                     # when every field is wanted.
                     short = logbook.brief(m)
                     print(f"[bridge] -> {short or m}", file=sys.stderr)
+            elif kind == "approve_req":
+                # The id and the tool, never the message: its text is a shell
+                # command or a path, can carry a token, and this log is the
+                # file a customer is asked to send us. See pc/approvals.py.
+                print(f"[bridge] -> approve_req {m.get('id')} {m.get('tool')}",
+                      file=sys.stderr)
             elif kind not in ("ota_data", "pong"):
                 print(f"[bridge] -> {m}", file=sys.stderr)
             # encode_CHECKED. This is the only writer, and it used to call
@@ -1127,7 +1134,8 @@ def main(argv=None):
                         set_preferred=bus.set_preferred,
                         self_update=self_update,
                         pending=update.PendingFirmware(
-                            os.path.join(blink_home, "pending_fw.json")))
+                            os.path.join(blink_home, "pending_fw.json")),
+                        approvals=Approvals(write_msg))
         report_failure = None   # handed to the Bridge above; never repeated
         # No reset means no boot `hello`, so nothing would trigger the
         # greeting -- see Bridge.greet.
@@ -1197,6 +1205,7 @@ def main(argv=None):
                         if not proven:
                             update.cleanup(self_bin)
                             proven = True
+                bridge.poll_approvals()
                 if time.monotonic() >= next_poll:
                     # Poll only while the board is provably alive (pings within
                     # the liveness window): there is no point talking to a

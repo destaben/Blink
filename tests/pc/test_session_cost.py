@@ -1,26 +1,40 @@
-"""The session dial is an estimate; these pin what it may and may not claim."""
+"""The left dial is today's spend, an estimate; these pin what it may claim."""
+import datetime
 import json
 import os
 
 from pc.ingest import IngestionBus
 from pc.providers import base
 from pc.providers.session_cost import (DEFAULT_RATES, SessionCostProvider,
-                                       _Transcript, usage_cost)
+                                       _Transcript, day_start, next_day_start,
+                                       usage_cost)
 
-NOW = 1_787_700_000.0
+# Noon, local time, on an arbitrary day. Anchored to the local day so the
+# tests mean the same thing in every time zone: "earlier today" is NOW - 3h
+# and "yesterday" is NOW - 1 day wherever the runner happens to be.
+NOW = day_start(1_787_700_000.0) + 12 * 3600.0
+DAY = 86400.0
 
 
-def _msg(mid, inp=0, out=0, cread=0, cwrite=0, role="assistant"):
-    return json.dumps({"uuid": "u-" + mid, "message": {
+def _iso(epoch):
+    return datetime.datetime.fromtimestamp(
+        epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _msg(mid, inp=0, out=0, cread=0, cwrite=0, role="assistant", at=None):
+    d = {"uuid": "u-" + mid, "message": {
         "id": mid, "role": role,
         "usage": {"input_tokens": inp, "output_tokens": out,
                   "cache_read_input_tokens": cread,
-                  "cache_creation_input_tokens": cwrite}}}) + "\n"
+                  "cache_creation_input_tokens": cwrite}}}
+    if at is not None:
+        d["timestamp"] = _iso(at)
+    return json.dumps(d) + "\n"
 
 
-def _project(tmp_path, lines, mtime=NOW):
-    d = tmp_path / "-proj"
-    d.mkdir()
+def _project(tmp_path, lines, mtime=NOW, name="-proj"):
+    d = tmp_path / name
+    d.mkdir(exist_ok=True)
     f = d / "s1.jsonl"
     f.write_text("".join(lines))
     os.utime(f, (mtime, mtime))
@@ -95,34 +109,81 @@ def _provider(tmp_path):
     return SessionCostProvider(now=lambda: NOW, root=str(tmp_path))
 
 
-def test_dial_is_session_cost_over_the_budget(tmp_path):
+def test_dial_is_todays_cost_over_the_daily_limit(tmp_path):
     _project(tmp_path, [_msg("a", out=1_000_000)])  # $15 at the default rate
     p = _provider(tmp_path)
     p._refresh()
     f = p.poll(NOW)[0]
     assert (f.provider, f.src) == ("claude", "session-cost")
-    assert round(f.session_pct, 2) == 6.0  # 15 / 250
+    assert round(f.session_pct, 2) == 50.0  # 15 / 30
     assert f.weekly_pct == base.UNKNOWN
+    assert f.cost_dials == 1
 
 
-def test_a_quiet_transcript_is_not_the_current_session(tmp_path):
+def test_the_countdown_runs_to_local_midnight(tmp_path):
+    _project(tmp_path, [_msg("a", out=1)])
+    p = _provider(tmp_path)
+    p._refresh()
+    f = p.poll(NOW)[0]
+    assert f.session_resets_at == next_day_start(NOW)
+    assert 0 < f.session_resets_at - NOW <= 12.5 * 3600
+
+
+def test_every_session_of_the_day_adds_up(tmp_path):
+    _project(tmp_path, [_msg("a", out=1_000_000)], mtime=NOW - 600)
+    _project(tmp_path, [_msg("b", out=500_000)], mtime=NOW - 10, name="-other")
+    p = _provider(tmp_path)
+    p._refresh()
+    assert round(p.poll(NOW)[0].session_pct, 2) == 75.0  # (15 + 7.5) / 30
+
+
+def test_a_session_that_went_quiet_hours_ago_still_counts(tmp_path):
+    # The limit is spent whether or not anybody is typing.
     _project(tmp_path, [_msg("a", out=1_000_000)], mtime=NOW - 3 * 3600)
     p = _provider(tmp_path)
     p._refresh()
-    assert p.poll(NOW) == []
+    assert round(p.poll(NOW)[0].session_pct, 2) == 50.0
 
 
-def test_the_most_recently_written_session_wins(tmp_path):
-    old = _project(tmp_path, [_msg("a", out=1_000_000)], mtime=NOW - 600)
-    d2 = tmp_path / "-other"
-    d2.mkdir()
-    new = d2 / "s2.jsonl"
-    new.write_text(_msg("b", out=2_000_000))
-    os.utime(new, (NOW - 10, NOW - 10))
-    assert old.exists()
+def test_yesterdays_half_of_a_session_left_open_does_not_count(tmp_path):
+    _project(tmp_path, [_msg("old", out=2_000_000, at=NOW - DAY),
+                        _msg("new", out=1_000_000, at=NOW - 60)])
     p = _provider(tmp_path)
     p._refresh()
-    assert round(p.poll(NOW)[0].session_pct, 2) == 12.0  # 30 / 250
+    assert round(p.poll(NOW)[0].session_pct, 2) == 50.0  # only the $15
+
+
+def test_a_file_untouched_since_yesterday_is_not_opened(tmp_path):
+    _project(tmp_path, [_msg("a", out=1_000_000)], mtime=NOW - DAY)
+    p = _provider(tmp_path)
+    p._refresh()
+    assert p.poll(NOW)[0].session_pct == 0.0
+    assert p._reader == {}
+
+
+def test_the_day_is_rebuilt_from_the_files_after_a_restart(tmp_path):
+    _project(tmp_path, [_msg("a", out=1_000_000)])
+    first, second = _provider(tmp_path), _provider(tmp_path)
+    first._refresh()
+    second._refresh()
+    assert first.poll(NOW)[0].session_pct == second.poll(NOW)[0].session_pct
+
+
+def test_after_midnight_yesterdays_figure_is_not_shown(tmp_path):
+    _project(tmp_path, [_msg("a", out=1_000_000)])
+    p = _provider(tmp_path)
+    p._refresh()
+    after = next_day_start(NOW) + 1
+    p._next_try = after + 100  # keep poll() from starting a refresh
+    assert p.poll(after) == []
+
+
+def test_the_daily_limit_can_be_overridden(tmp_path, monkeypatch):
+    monkeypatch.setenv("BLINK_DAILY_LIMIT_USD", "60")
+    _project(tmp_path, [_msg("a", out=1_000_000)])
+    p = _provider(tmp_path)
+    p._refresh()
+    assert round(p.poll(NOW)[0].session_pct, 2) == 25.0
 
 
 def test_no_projects_directory_is_silent(tmp_path):

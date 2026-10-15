@@ -33,6 +33,63 @@ static struct usage_counts C(int sess, int run, int wait, int stuck)
 	return c;
 }
 
+/*
+ * The persistent alert. What matters here is the ack: a tap must silence the
+ * blinking without muting the panel for the rest of the day.
+ */
+static void test_alert(void)
+{
+	struct usage_alert al = { false };
+	struct usage_counts none = C(2, 2, 0, 0);
+	struct usage_counts one = C(2, 1, 1, 0);
+	struct usage_counts two = C(3, 1, 2, 0);
+	struct usage_counts failed = C(2, 1, 0, 1);
+
+	CHECK(!usage_alert_update(&al, NULL, &none),
+	      "alert: nothing waiting, nothing blinks");
+	CHECK(usage_alert_update(&al, NULL, &one),
+	      "alert: a prompt already open at boot blinks");
+	CHECK(usage_alert_update(&al, &one, &one),
+	      "alert: it keeps blinking while the prompt stays open");
+
+	usage_alert_ack(&al);
+	CHECK(!usage_alert_update(&al, &one, &one),
+	      "alert: a tap silences it");
+	CHECK(!usage_alert_update(&al, &one, &one),
+	      "alert: and it stays silent on later polls");
+
+	CHECK(usage_alert_update(&al, &one, &two),
+	      "alert: a NEW waiting session blinks again after a tap");
+
+	usage_alert_ack(&al);
+	CHECK(!usage_alert_update(&al, &two, &none),
+	      "alert: answered, nothing blinks");
+	CHECK(usage_alert_update(&al, &none, &one),
+	      "alert: the ack does not outlive the prompt it was for");
+
+	/* An acked prompt is still open, and then a turn fails as well: the
+	 * failure is new and must not inherit the tap meant for the prompt. */
+	usage_alert_ack(&al);
+	CHECK(!usage_alert_update(&al, &one, &one),
+	      "alert: acked prompt, still silent");
+	{
+		struct usage_counts both = C(3, 1, 1, 1);
+
+		CHECK(usage_alert_update(&al, &one, &both),
+		      "alert: a failure while a prompt is acked blinks again");
+	}
+	{
+		struct usage_alert fa = { false };
+
+		CHECK(usage_alert_update(&fa, &none, &failed),
+		      "alert: a failed turn blinks like a prompt");
+	}
+	CHECK(!usage_alert_update(NULL, &one, &one),
+	      "alert: a NULL state is not a crash");
+	CHECK(!usage_alert_update(&al, &one, NULL),
+	      "alert: NULL counts are not a crash");
+}
+
 static void test_toast_change(void)
 {
 	struct usage_toast t;
@@ -236,6 +293,7 @@ int main(void)
 	      "nothing known does not displace the clock");
 
 	test_toast_change();
+	test_alert();
 
 	printf(failures ? "\n%d FAILED\n" : "\nall state checks passed\n",
 	       failures);

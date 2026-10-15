@@ -220,6 +220,7 @@ def merge(frames):
         # Fallback sources are only offered when no fresh plan window exists
         # for their dial (pc/ingest.py), so there is nothing to disagree with.
         cost_dials=functools.reduce(lambda a, f: a | f.cost_dials, frames, 0),
+        weekly_usd=max((f.weekly_usd for f in frames), default=0),
     )
 
 
