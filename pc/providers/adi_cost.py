@@ -87,16 +87,46 @@ def _env_float(name, default):
     return v if v > 0 else default
 
 
+# Where Homebrew puts it on the machines this team uses. Checked before PATH
+# because launchd starts the daemon with a bare one.
+HOMEBREW_BIN = "/opt/homebrew/bin/adi-aie"
+
+
+def _find_adi_aie():
+    """Path of the adi-aie executable, or None: the Homebrew location first,
+    then anywhere else it is installed."""
+    if os.path.isfile(HOMEBREW_BIN) and os.access(HOMEBREW_BIN, os.X_OK):
+        return HOMEBREW_BIN
+    return shutil.which("adi-aie", path=os.pathsep.join(
+        [os.environ.get("PATH", "")] + list(_EXTRA_PATH)))
+
+
 def _resolve_command():
     raw = os.environ.get("BLINK_COST_CMD")
     argv = shlex.split(raw) if raw else ["adi-aie", "user-cost", "--monthly"]
     if not argv:
         return None
-    exe = shutil.which(argv[0], path=os.pathsep.join(
-        [os.environ.get("PATH", "")] + list(_EXTRA_PATH)))
+    if raw:
+        exe = shutil.which(argv[0], path=os.pathsep.join(
+            [os.environ.get("PATH", "")] + list(_EXTRA_PATH)))
+    else:
+        exe = _find_adi_aie()
     if exe is None:
         return None
     return [exe] + argv[1:]
+
+
+def installed():
+    """True when this machine runs Claude through adi-aie.
+
+    This is the one switch between the two ways the board reads an account:
+    adi-aie installed means spend against a budget (TODAY / MONTH), and not
+    installed means the plan windows from Claude Desktop and the status line
+    (SESSION 5h / WEEKLY 7d), exactly as before spend sources existed. It is
+    checked on every cycle, so installing or removing the tool takes effect
+    without restarting the daemon.
+    """
+    return _resolve_command() is not None
 
 
 def _run(argv):
@@ -181,7 +211,13 @@ class AdiCostProvider(ProviderParser):
                 self._busy = False
 
     def poll(self, now_epoch):
-        """The last good reading. Never blocks: the read runs on a thread."""
+        """The last good reading. Never blocks: the read runs on a thread.
+
+        Nothing at all, and no command run, when adi-aie is not installed: the
+        account is then a plan account and this source has no business on it.
+        """
+        if self._resolver() is None:
+            return []
         with self._lock:
             start = (not self._busy) and now_epoch >= self._next_try
             if start:

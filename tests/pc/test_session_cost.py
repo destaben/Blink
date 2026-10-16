@@ -106,7 +106,8 @@ def test_user_messages_and_garbage_lines_cost_nothing(tmp_path):
 
 
 def _provider(tmp_path):
-    return SessionCostProvider(now=lambda: NOW, root=str(tmp_path))
+    return SessionCostProvider(now=lambda: NOW, root=str(tmp_path),
+                               installed=lambda: True)
 
 
 def test_dial_is_todays_cost_over_the_daily_limit(tmp_path):

@@ -44,7 +44,7 @@ import sys
 import threading
 import time
 
-from pc.providers import base
+from pc.providers import adi_cost, base
 from pc.providers.base import NormalizedUsageFrame, ProviderParser
 
 PROVIDER_ID = "claude"
@@ -158,8 +158,9 @@ class _Transcript:
 class SessionCostProvider(ProviderParser):
     SRC = SRC_ID
 
-    def __init__(self, now=time.time, root=None):
+    def __init__(self, now=time.time, root=None, installed=adi_cost.installed):
         self._now = now
+        self._installed = installed
         self._root = root or os.environ.get("BLINK_CLAUDE_PROJECTS") or \
             os.path.expanduser("~/.claude/projects")
         self._limit = _env_float("BLINK_DAILY_LIMIT_USD", DEFAULT_LIMIT_USD)
@@ -213,7 +214,13 @@ class SessionCostProvider(ProviderParser):
                 self._busy = False
 
     def poll(self, now_epoch):
-        """The last estimate. Never blocks: the read runs on a thread."""
+        """The last estimate. Never blocks: the read runs on a thread.
+
+        Nothing, and no transcript read, when adi-aie is not installed: on a
+        plan account the session dial is the real 5 h window, not a cost.
+        """
+        if not self._installed():
+            return []
         with self._lock:
             start = (not self._busy) and now_epoch >= self._next_try
             if start:

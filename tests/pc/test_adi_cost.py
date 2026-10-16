@@ -180,7 +180,8 @@ def test_each_spend_source_marks_only_its_own_dial(tmp_path):
     f.write_text(json.dumps({"message": {"id": "a", "role": "assistant",
                  "usage": {"output_tokens": 1_000_000}}}) + "\n")
     os.utime(f, (NOW, NOW))
-    sp = SessionCostProvider(now=lambda: NOW, root=str(tmp_path))
+    sp = SessionCostProvider(now=lambda: NOW, root=str(tmp_path),
+                             installed=lambda: True)
     sp._refresh()
     assert sp.poll(NOW)[0].cost_dials == 1
 
@@ -206,3 +207,70 @@ def test_merge_carries_the_dollars_to_the_wire():
     assert protocol.frame_to_usage(merged, NOW)["usd"] == 531
     # A plan account never sends it.
     assert normalizer.merge([_plan_frame(42.0)]).weekly_usd == 0
+
+
+# --- adi-aie installed or not: the switch between spend and plan ----------
+
+def _transcript_root(tmp_path):
+    d = tmp_path / "-p"
+    d.mkdir()
+    f = d / "s.jsonl"
+    f.write_text(json.dumps({"message": {"id": "a", "role": "assistant",
+                 "usage": {"output_tokens": 1_000_000}}}) + "\n")
+    os.utime(f, (NOW, NOW))
+    return str(tmp_path)
+
+
+def test_not_installed_means_no_spend_frames_and_no_command_run(tmp_path):
+    """Plan account: neither fallback offers anything, and nothing is run."""
+    from pc.providers.session_cost import SessionCostProvider
+    ran = []
+    p = AdiCostProvider(now=lambda: NOW,
+                        runner=lambda a: ran.append(a) or OUT,
+                        resolver=lambda: None)
+    assert p.poll(NOW) == []
+    p._thread_wait = None
+    sp = SessionCostProvider(now=lambda: NOW, root=_transcript_root(tmp_path),
+                             installed=lambda: False)
+    assert sp.poll(NOW) == []
+    assert sp._reader == {} and sp._cost is None     # no transcript was read
+    assert ran == []
+
+
+def test_installed_session_cost_offers_its_frame(tmp_path):
+    from pc.providers.session_cost import SessionCostProvider
+    sp = SessionCostProvider(now=lambda: NOW, root=_transcript_root(tmp_path),
+                             installed=lambda: True)
+    sp._refresh()
+    assert sp.poll(NOW)[0].cost_dials == 1
+
+
+def test_homebrew_location_wins_then_anywhere_on_path(tmp_path, monkeypatch):
+    exe = tmp_path / "adi-aie"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    monkeypatch.delenv("BLINK_COST_CMD", raising=False)
+    # not at the Homebrew path, not on PATH: not installed
+    monkeypatch.setattr(adi_cost, "HOMEBREW_BIN", str(tmp_path / "nope"))
+    monkeypatch.setattr(adi_cost, "_EXTRA_PATH", ())
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    assert adi_cost.installed() is False
+    # found globally
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert adi_cost.installed() is True
+    assert adi_cost._resolve_command()[0] == str(exe)
+    # the Homebrew path is preferred when present
+    monkeypatch.setattr(adi_cost, "HOMEBREW_BIN", str(exe))
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    assert adi_cost._resolve_command()[0] == str(exe)
+
+
+def test_non_executable_homebrew_file_does_not_count(tmp_path, monkeypatch):
+    exe = tmp_path / "adi-aie"
+    exe.write_text("")
+    exe.chmod(0o644)
+    monkeypatch.delenv("BLINK_COST_CMD", raising=False)
+    monkeypatch.setattr(adi_cost, "HOMEBREW_BIN", str(exe))
+    monkeypatch.setattr(adi_cost, "_EXTRA_PATH", ())
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    assert adi_cost.installed() is False
