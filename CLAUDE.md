@@ -52,8 +52,10 @@ mutates the tree.
 
 The board reads NDJSON lines and **drops an over-long line whole**, silently,
 with no error on either side — the panel just stops updating while the daemon's
-log keeps printing the message as sent. The budget is 512 bytes and a loaded
-two-provider frame already measures 484.
+log keeps printing the message as sent. The budget is 512 bytes. The widest
+usage line the tests build measures 470 (451 without spend; see
+`tests/pc/test_protocol.py`), and it was 506 before percentages were rounded to
+one decimal, so re-measure rather than trust either figure.
 
 So: every production writer uses `protocol.encode_checked()`, never plain
 `encode()`. `encode_checked` was written for exactly this and once had no
@@ -74,7 +76,7 @@ Pillow, so on a machine whose system `python3` lacks them, run it as
 `BLINK_PYTHON=$PWD/.venv-test/bin/python sh tests/ci/check_factory.sh`. The
 other CI scripts have no such dependency.
 
-**1580 passing** as of 2026-10-16. The first four packages are pinned in
+**1589 passing** as of 2026-10-19. The first four packages are pinned in
 `pc/requirements.txt` and are pinned on purpose; `numpy` and `Pillow` are only
 needed by the logo and boot-animation encoder tests. CI runs the same
 `pytest tests/ -q`.

@@ -35,7 +35,7 @@ I build them, test them and post them.
 
 ## What it is
 
-BLINK is a small touchscreen that shows the same numbers as Claude Code's `/usage` command, always in view: your **5-hour session** and your **7-day week**, each as a dial that turns from green to amber to red, with a countdown to its reset. It plugs into your computer over USB, sets itself up in one command, and keeps itself updated.
+BLINK is a small touchscreen that shows the same numbers as Claude Code's `/usage` command, always in view: your **5-hour session** and your **7-day week**, each as a dial that turns from green to amber to red, with a countdown to its reset. On a company gateway account the dials read **TODAY** (today's estimated spend against a daily limit) and **MONTH** (the month's spend against a budget) instead, because those accounts have no plan windows. It plugs into your computer over USB, sets itself up in one command, and keeps itself updated.
 
 ## Open source
 

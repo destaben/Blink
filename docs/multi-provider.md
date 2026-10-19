@@ -76,6 +76,12 @@ decision below rests on this being honest.
 | Weekly anchor (rolled forward, §3c) | — | — | **weekly only** | — | — | — |
 | Codex rollout log | ✓ | ✓ | ✓ | — | — | — |
 | Hook state file | — | — | — | — | — | ✓ |
+| `adi-aie user-cost --monthly` (gateway accounts) | — | ✓ (**MONTH**, a budget, not a plan window) | **month only** | — | — | — |
+| Today's transcripts (gateway accounts, estimate) | ✓ (**TODAY**, a daily limit) | — | **day only** | — | — | — |
+
+The two gateway rows are fallbacks, each for one dial: a fresh plan window
+from any other source on that dial wins, and neither ever reaches the weekly
+anchor, because a month-end is not a week boundary.
 
 Two rows did not exist when this table was first written. Desktop Local
 Storage and the weekly anchor are the two sources §3c describes; between
@@ -533,7 +539,9 @@ panel is broken.
 
 ### The 512-byte cliff
 
-The fully loaded two-provider frame measures **484 of the 512 bytes**, and
+The widest two-provider usage line the tests build measures **470 of the 512
+bytes** (451 without the spend fields; `tests/pc/test_protocol.py` checks it on
+every run), and
 `pc/protocol.encode_checked` is what stands between that and the cliff. Note
 that it was written, documented as the thing callers use, and then not used:
 the daemon's only writer called plain `encode()` until 2026-08-28, so the
