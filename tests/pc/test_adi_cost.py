@@ -3,6 +3,8 @@ import datetime
 import json
 import os
 
+import pytest
+
 from pc.providers import adi_cost, base
 from pc.providers.adi_cost import AdiCostProvider, next_month_start, parse_spend
 
@@ -258,7 +260,9 @@ def test_installed_session_cost_offers_its_frame(tmp_path):
 
 
 def test_homebrew_location_wins_then_anywhere_on_path(tmp_path, monkeypatch):
-    exe = tmp_path / "adi-aie"
+    # On Windows a command is found by its PATHEXT extension, so the file
+    # there is adi-aie.exe; a bare name never matches.
+    exe = tmp_path / ("adi-aie.exe" if os.name == "nt" else "adi-aie")
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
     monkeypatch.delenv("BLINK_COST_CMD", raising=False)
@@ -277,6 +281,8 @@ def test_homebrew_location_wins_then_anywhere_on_path(tmp_path, monkeypatch):
     assert adi_cost._resolve_command()[0] == str(exe)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions: Windows has"
+                    " no execute bit, so os.access(X_OK) is true for any file")
 def test_non_executable_homebrew_file_does_not_count(tmp_path, monkeypatch):
     exe = tmp_path / "adi-aie"
     exe.write_text("")

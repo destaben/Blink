@@ -8,6 +8,7 @@ resolve to the owner's live install.
 """
 import json
 import os
+import sys
 
 import pytest
 
@@ -20,6 +21,16 @@ SHIM = "/home/k/.blink/blink-hook.sh"
 @pytest.fixture(autouse=True)
 def _no_real_codex_home(monkeypatch):
     monkeypatch.delenv("CODEX_HOME", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _posix_command_form(monkeypatch):
+    """hook_command writes `bash <forward-slashed path>` on Windows and
+    `sh <quoted path>` everywhere else. These tests assert the POSIX form
+    against a POSIX shim path, so pin the platform the same way
+    tests/pc/test_install_hooks.py does for its Windows case. Without this the
+    Windows CI job fails on the spelling, not on anything the tests mean."""
+    monkeypatch.setattr(sys, "platform", "linux")
 
 
 def _events(data):

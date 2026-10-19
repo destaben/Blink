@@ -639,7 +639,11 @@ def test_uninstall_says_it_left_the_codex_trust_record_alone(tmp_path, capsys,
 
     out = capsys.readouterr().out
     assert "trust" in out.lower(), "uninstall says nothing about the trust record"
-    assert str(config) in out, "it does not name the file it left behind"
+    # normpath on both sides: codex_home() joins "~/.codex" onto a USERPROFILE
+    # with forward slashes in it, so the printed path can mix separators that
+    # str(config) does not. The file is the same; only its spelling differs.
+    assert os.path.normpath(str(config)) in os.path.normpath(out), \
+        "it does not name the file it left behind"
     assert "hooks.state" in out, "it does not say how to undo it"
     # And the record really is still there. This is the assertion the ruling
     # turns on: a single added os.remove() in _uninstall_codex_hooks would be
