@@ -35,6 +35,63 @@ int main(void)
 	CHECK(msg_get_double(tm, "utc_offset_min", &d) && fabs(d + 300.0) < 0.01,
 	      "negative utc_offset_min");
 
+	/* msg_get_str_esc: text somebody else wrote, shown to a person who is
+	 * about to approve it. Every case below is a way to show them less (or
+	 * different) than was sent. */
+	{
+		char out[64];
+		bool cut;
+		const char *q = "{\"t\":\"approve_req\",\"id\":\"a1\","
+			"\"cmd\":\"echo \\\"hi\\\" && ls\\\\x\\nok\"}";
+
+		CHECK(msg_get_str_esc(q, "cmd", out, sizeof(out), &cut) && !cut &&
+		      strcmp(out, "echo \"hi\" && ls\\x\nok") == 0,
+		      "esc: quotes, backslash and newline are undone");
+		CHECK(msg_get_str(q, "cmd", out, sizeof(out)) &&
+		      strcmp(out, "echo \\") == 0,
+		      "esc: the plain reader really does cut at the first quote");
+
+		const char *u = "{\"cmd\":\"a\\u0041b\\u00e9c\\u4e2dd\"}";
+
+		CHECK(msg_get_str_esc(u, "cmd", out, sizeof(out), &cut) &&
+		      strcmp(out, "aAb?c?d") == 0,
+		      "esc: \\u escapes above 0x7e become '?', below stay");
+
+		const char *raw = "{\"cmd\":\"caf\xc3\xa9\"}";
+
+		CHECK(msg_get_str_esc(raw, "cmd", out, sizeof(out), &cut) &&
+		      strcmp(out, "caf??") == 0,
+		      "esc: raw UTF-8 bytes become '?', never a lookalike");
+
+		char small[8];
+
+		CHECK(msg_get_str_esc(q, "cmd", small, sizeof(small), &cut) &&
+		      cut && strlen(small) == 7,
+		      "esc: a value that does not fit says so");
+
+		CHECK(!msg_get_str_esc("{\"cmd\":\"never ends", "cmd", out,
+				       sizeof(out), &cut),
+		      "esc: an unterminated string is refused");
+		CHECK(!msg_get_str_esc("{\"cmd\":\"bad \\x escape\"}", "cmd", out,
+				       sizeof(out), &cut) && out[0] == '\0',
+		      "esc: an unknown escape is refused, buffer left empty");
+		CHECK(!msg_get_str_esc("{\"cmd\":\"bad \\u12g4\"}", "cmd", out,
+				       sizeof(out), &cut),
+		      "esc: a malformed \\u is refused");
+		CHECK(!msg_get_str_esc("{\"cmd\":5}", "cmd", out, sizeof(out), &cut),
+		      "esc: a number is not a string");
+		CHECK(!msg_get_str_esc(q, "nokey", out, sizeof(out), &cut),
+		      "esc: a missing key is false");
+
+		/* A key spelled inside an earlier VALUE must not be mistaken for
+		 * the key: the daemon puts cmd last, and escapes inner quotes. */
+		const char *inj = "{\"id\":\"a1\",\"cmd\":\"x \\\"id\\\":\\\"evil\\\"\"}";
+
+		CHECK(msg_get_str_esc(inj, "id", out, sizeof(out), &cut) &&
+		      strcmp(out, "a1") == 0,
+		      "esc: a key quoted inside the command text is not the key");
+	}
+
 	/* msg_get_bool: the daemon marks a reading it cannot vouch for, and the
 	 * panel must be able to tell that from a real rate limit. */
 	{

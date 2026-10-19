@@ -33,7 +33,8 @@ class Bridge:
                  app_ver=RELEASE_VERSION,
                  wall=_local_wall, fetch_manifest=None, fetch_firmware=None,
                  flash_image=None, self_update=None, pending=None,
-                 fetch_signed_manifest=None, report_failure=None):
+                 fetch_signed_manifest=None, report_failure=None,
+                 approvals=None):
         self._write = write_msg          # callable(dict)
         self._fetch = fetch_usage        # callable() -> usage message dict
         # The board owns the primary-provider preference; this applies it.
@@ -75,6 +76,13 @@ class Bridge:
         # poll_if_changed decides against: "sent", not "read", because the
         # capping on the way out is part of what the board received.
         self._last_pushed = None
+        # Board-side permission approvals (pc/approvals.py). None when the
+        # daemon is wired without them, which is every test that predates them.
+        # `_board_approve` is what the board SAID: it advertises the capability
+        # on its pref, and an older firmware says nothing, in which case no
+        # request is offered -- it would ignore it and a person would wait.
+        self._approvals = approvals
+        self._board_approve = False
 
     def greet(self):
         """Introduce ourselves and push what we have, immediately.
@@ -145,12 +153,16 @@ class Bridge:
             # It arrives with every hello as well as on change, so a daemon
             # that restarts picks the choice back up without the user
             # touching anything.
+            self._board_approve = msg.get("approve") == 1
             want = msg.get("provider")
             if self._set_preferred and isinstance(want, str):
                 if self._set_preferred(want):
                     print(f"[bridge] main source: {want}", file=sys.stderr)
             return
         if t == "hello":
+            if self._approvals:
+                # A rebooted board has forgotten any card it was showing.
+                self._approvals.resend()
             self._note_board(msg)
             self.greet()
             self.offer_if_newer(msg.get("fw"))
@@ -163,6 +175,9 @@ class Bridge:
             self._on_ota_query(msg.get("cur", ""))
         elif t == "ota_flash":
             self._on_ota_flash()
+        elif t == "approve_res":
+            if self._approvals:
+                self._approvals.on_result(msg)
         # unknown types ignored
 
     # --- OTA, for a board with no network of its own -------------------
@@ -559,6 +574,16 @@ class Bridge:
         # that may have missed a message, and what keeps a panel that has been
         # sitting on the same numbers all afternoon provably connected.
         self._send_usage(usage)
+
+    def poll_approvals(self):
+        """Pick up permission requests waiting for the board.
+
+        Called from the read loop on every pass and rate-limited inside, so a
+        request reaches the board in a fraction of a second rather than on the
+        2 s state tick. Costs one stat when the feature is off.
+        """
+        if self._approvals:
+            self._approvals.poll(self.board_alive() and self._board_approve)
 
     def poll_if_changed(self):
         """Send only when something a reader could act on has moved.

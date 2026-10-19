@@ -170,12 +170,30 @@ static enum usage_activity activity = USAGE_ACTIVITY_NONE;
 static lv_obj_t *toast;
 static lv_obj_t *toast_lbl;
 static int toast_ttl;			/* seconds left; 0 = not showing */
+
 static struct usage_counts toast_prev;
 static bool toast_have_prev;
 static bool sleeping;
 /* Filled by usage_view_set_session() from the daemon; see proto.c. */
 static char session_label[28] = "";
 static char provider1_tag[12];	/* whichever provider the daemon made primary */
+/* Which dials show spend against a budget rather than a plan window, as the
+ * daemon's "cd" bitmask: 1 = session, 2 = weekly. 0, and the default when the
+ * key is absent, is a plan account: SESSION 5h and WEEKLY 7d. */
+static int cost_dials;
+/* Dollars spent this month, sent only once spend is past the budget (see
+ * usage_view_set_weekly_usd()). 0 is "not sent", not "nothing spent". */
+static int weekly_usd;
+
+static const char *session_dial_name(void)
+{
+	return (cost_dials & 1) ? "TODAY" : "SESSION 5h";
+}
+
+static const char *weekly_dial_name(void)
+{
+	return (cost_dials & 2) ? "MONTH" : "WEEKLY 7d";
+}
 static lv_obj_t *provider_lbl;	/* the tag, spelled out under the brand */
 static char provider2_tag[12];	/* "" when there is only one provider */
 
@@ -528,11 +546,13 @@ static void render_weekly(void)
 	lv_label_set_text(weekly.name, sel_name[weekly_sel]);
 #else
 	/* One window, so the gauge never needs to say which one it is showing
-	 * -- but it still says it, because "WEEKLY 7d" is the honest name for
-	 * the number under it. */
+	 * -- but it still says it, because the name is the honest answer to
+	 * "which window is this": WEEKLY 7d for a plan, MONTH when the number is
+	 * spend against a monthly budget and the countdown runs to the first of
+	 * the next month. */
 	double pct = last_w_pct;
 
-	lv_label_set_text(weekly.name, "WEEKLY 7d");
+	lv_label_set_text(weekly.name, weekly_dial_name());
 #endif
 	if (pct < 0) {
 		lv_label_set_text(weekly.pct, "--%");
@@ -543,6 +563,18 @@ static void render_weekly(void)
 	char buf[8];
 
 	snprintf(buf, sizeof(buf), "%d%%", (int)pct_int(pct));
+	if ((cost_dials & 2) && weekly_usd > 0 && pct >= 100.0) {
+		/* Past the budget the ring is full and the percentage says only
+		 * how far; what the owner wants to know is how much money has
+		 * gone. The dollars go in the caption so the big figure keeps
+		 * its width: "MONTH $99999" is 12 characters against the 9 of
+		 * "WEEKLY 7d". */
+		char cap[20];
+
+		snprintf(cap, sizeof(cap), "%s $%d", weekly_dial_name(),
+			 weekly_usd);
+		lv_label_set_text(weekly.name, cap);
+	}
 	lv_label_set_text(weekly.pct, buf);
 	lv_arc_set_value(weekly.arc, arc_value(pct));
 	lv_obj_set_style_arc_color(weekly.arc, severity(pct), LV_PART_INDICATOR);
@@ -856,8 +888,8 @@ void usage_view_init(void)
 	lv_obj_set_style_text_align(provider_lbl, LV_TEXT_ALIGN_CENTER, 0);
 	lv_obj_align(provider_lbl, LV_ALIGN_BOTTOM_MID, 0, -PILL_BOTTOM_OFF);
 
-	build_gauge(&session, scr, -GAUGE_CX, "SESSION 5h");
-	build_gauge(&weekly, scr, GAUGE_CX, "WEEKLY 7d");
+	build_gauge(&session, scr, -GAUGE_CX, session_dial_name());
+	build_gauge(&weekly, scr, GAUGE_CX, weekly_dial_name());
 
 
 	/* Edge affordances: without them nobody discovers the swipes (user
@@ -1916,10 +1948,11 @@ static void toast_consider(int n_sess, int n_run, int n_wait, int n_stuck)
 	struct usage_counts now = { n_sess, n_run, n_wait, n_stuck };
 	struct usage_toast t;
 	char text[FMT_TOAST_MAX];
+	const struct usage_counts *prev = toast_have_prev ? &toast_prev : NULL;
+	const bool changed = usage_toast_change(prev, &now, activity, &t);
+	const bool shown = !sleeping && !usage_view_takeover_active();
 
-	if (usage_toast_change(toast_have_prev ? &toast_prev : NULL, &now,
-			       activity, &t) &&
-	    !sleeping && !usage_view_takeover_active()) {
+	if (changed && shown) {
 		/*
 		 * The label only when usage_toast_change() says it belongs to
 		 * the state that changed -- the daemon picks it for the WORST
@@ -2274,7 +2307,11 @@ static void refresh_provider1(void)
 		char t[sizeof(provider1_tag)];
 
 		tag_cased(t, sizeof(t), tag);
-		lv_label_set_text(provider_lbl, t);
+		if (cost_dials) {
+			lv_label_set_text_fmt(provider_lbl, "%s %s", t, PILL_SUFFIX);
+		} else {
+			lv_label_set_text(provider_lbl, t);
+		}
 		/*
 		 * The fill is what says "you can press this", so it is there
 		 * only when pressing does something. A single-provider desk
@@ -2346,6 +2383,34 @@ void usage_view_set_provider1(const char *tag)
 	 * not the ring position. */
 	snprintf(provider1_tag, sizeof(provider1_tag), "%s", tag ? tag : "");
 	refresh_provider1();
+}
+
+void usage_view_set_cost_dials(int dials)
+{
+	dials &= 3;
+	if (dials == cost_dials) {
+		return;
+	}
+	cost_dials = dials;
+	if (built) {
+		lv_label_set_text(session.name, session_dial_name());
+		render_weekly();
+		refresh_provider1();
+	}
+}
+
+void usage_view_set_weekly_usd(int usd)
+{
+	if (usd < 0) {
+		usd = 0;
+	}
+	if (usd == weekly_usd) {
+		return;
+	}
+	weekly_usd = usd;
+	if (built) {
+		render_weekly();
+	}
 }
 
 void usage_view_set_provider2(const char *tag, double session_pct,

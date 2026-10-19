@@ -16,6 +16,8 @@ firmware/src/secrets.h
 # lines of generated Zephyr output, in a public repository, permanently.
 firmware/build*/
 build*/
+# clangd's index of the firmware, written by an editor; per-machine.
+firmware/.cache/
 
 # Local-only: implementation plans reference the concerns doc (public repo)
 docs/superpowers/

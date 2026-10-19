@@ -4,7 +4,7 @@
 own desk, by looking at a board that was telling the truth about the wrong
 question. Kept here rather than deleted because the reasoning is the point: the
 bug was not a wrong answer, it was the right answer to a question nobody meant
-to ask. Move it out of open-bugs/ whenever that stops being useful.
+to ask. It lives here, not in open-bugs/, because it is no longer open.
 
 ## What it says, and what it knows
 

@@ -5,6 +5,11 @@ installer, the daemon's Windows branches and the real Claude Code CLI there;
 it cannot prove the two things a customer hits first, because no runner has a
 signed-in Claude Desktop or a board on a COM port.
 
+Not in this list: board approvals (`blink approve enable`, off by default).
+They are opt-in and have no Windows step yet, though `pc/approvals.py` has
+Windows branches (lines 114 and 406) that no step here runs, so a release that
+changes them needs its own pass before it ships.
+
 **Needs:** a Windows 10/11 PC or VM with USB passthrough; Claude Desktop
 installed and signed in; Claude Code installed (`npm install -g
 @anthropic-ai/claude-code`); a BLINK on a USB cable.

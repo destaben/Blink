@@ -18,6 +18,7 @@ from pc import ota as ota_mod
 from pc import (ingest, install_statusline, logbook, protocol,
                 statusline_source, update, win_driver)
 from pc.version import RELEASE_VERSION
+from pc.approvals import Approvals
 from pc.bridge import Bridge
 
 POLL_INTERVAL_S = 60
@@ -138,7 +139,7 @@ class Tap:
 
         `sent` is not decoration. send() refuses any line over the board's
         512-byte limit -- and a fully loaded two-provider frame already
-        measures 484 -- so the refusal happens in exactly the boundary cases
+        measures 470 (451 without spend) -- so the refusal happens in exactly the boundary cases
         this suite exists to catch. A transcript that recorded the refusal as
         a plain tx would say the host sent a frame the board ignored, and the
         hunt would start in the firmware for a bug that is in the host.
@@ -1033,6 +1034,12 @@ def main(argv=None):
                     # when every field is wanted.
                     short = logbook.brief(m)
                     print(f"[bridge] -> {short or m}", file=sys.stderr)
+            elif kind == "approve_req":
+                # The id and the tool, never the message: its text is a shell
+                # command or a path, can carry a token, and this log is the
+                # file a customer is asked to send us. See pc/approvals.py.
+                print(f"[bridge] -> approve_req {m.get('id')} {m.get('tool')}",
+                      file=sys.stderr)
             elif kind not in ("ota_data", "pong"):
                 print(f"[bridge] -> {m}", file=sys.stderr)
             # encode_CHECKED. This is the only writer, and it used to call
@@ -1045,7 +1052,7 @@ def main(argv=None):
             # line, it DROPS it whole (proto.c) with no error on either side:
             # the panel silently stops updating while this log keeps printing
             # the message as sent. A fully loaded two-provider frame already
-            # measures 484 of the 512 bytes.
+            # measures 470 of the 512 bytes (451 without spend).
             raw, why = protocol.encode_checked(m)
             if raw is None:
                 print(f"[bridge] NOT SENT: {why}", file=sys.stderr)
@@ -1127,7 +1134,8 @@ def main(argv=None):
                         set_preferred=bus.set_preferred,
                         self_update=self_update,
                         pending=update.PendingFirmware(
-                            os.path.join(blink_home, "pending_fw.json")))
+                            os.path.join(blink_home, "pending_fw.json")),
+                        approvals=Approvals(write_msg))
         report_failure = None   # handed to the Bridge above; never repeated
         # No reset means no boot `hello`, so nothing would trigger the
         # greeting -- see Bridge.greet.
@@ -1197,6 +1205,7 @@ def main(argv=None):
                         if not proven:
                             update.cleanup(self_bin)
                             proven = True
+                bridge.poll_approvals()
                 if time.monotonic() >= next_poll:
                     # Poll only while the board is provably alive (pings within
                     # the liveness window): there is no point talking to a

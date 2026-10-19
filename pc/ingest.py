@@ -16,11 +16,13 @@ import time
 
 from pc import cowork_audit, desktop_idb, normalizer, protocol, weekly_anchor
 from pc.providers import base
+from pc.providers.adi_cost import AdiCostProvider
 from pc.providers.claude_cli import ClaudeCliProvider
 from pc.providers.claude_desktop import ClaudeDesktopProvider
 from pc.providers.claude_desktop_ls import ClaudeDesktopLocalStorageProvider
 from pc.providers.claude_state import ClaudeStateProvider
 from pc.providers.codex_cli import CodexCliProvider
+from pc.providers.session_cost import SessionCostProvider
 from pc.providers.weekly_anchor import DesktopHistoryProvider, WeeklyAnchorProvider
 
 
@@ -55,6 +57,12 @@ def default_providers():
     return [ClaudeCliProvider(), ClaudeDesktopProvider(),
             ClaudeDesktopLocalStorageProvider(),
             ClaudeStateProvider(), CodexCliProvider(),
+            # Monthly spend against a fixed budget, for an account whose plan
+            # windows no other source can see. Silent when adi-aie is absent.
+            AdiCostProvider(),
+            # Today's cost across every transcript modified today, as a share
+            # of the daily budget, for the dial the plan's 5 h window would fill.
+            SessionCostProvider(),
             # LAST: it only ever offers a remembered projection, and every
             # source above it is polled first so any of them carrying a real
             # weekly reset is what observe() below learns from this cycle.
@@ -237,6 +245,24 @@ class IngestionBus:
                     del self._broken[key]
                     print(f"[ingest] {name} is working again",
                           file=sys.stderr)
+        # Two ways of reading the same account, never both: the plan windows
+        # (5 h / 7 d) from the tools that carry them, or -- on an account that
+        # has no such windows -- spend against a monthly budget. The spend
+        # sources are only fallbacks, each for ONE dial, so a real, fresh
+        # percentage on that dial from any other source wins and the fallback
+        # is dropped. They are also kept out of weekly_anchor.observe() below:
+        # a month-end reset is not a weekly boundary and must never be
+        # projected as one.
+        fallbacks = {AdiCostProvider.SRC: "weekly_pct",
+                     SessionCostProvider.SRC: "session_pct"}
+        real = [f for f in frames if f.src not in fallbacks]
+        for f in frames:
+            dial = fallbacks.get(f.src)
+            if dial is not None and not any(
+                    getattr(r, dial) >= 0 and not r.stale for r in real):
+                real.append(f)
+        frames = real
+        observed = [f for f in frames if f.src not in fallbacks]
         try:
             # Bonus learning, never a poll cost: whatever just carried a real
             # weekly reset becomes tomorrow's WeeklyAnchorProvider projection.
@@ -252,7 +278,7 @@ class IngestionBus:
             # boundary become the anchor that WeeklyAnchorProvider then
             # republishes with provider="claude" -- a different account's
             # reset, presented as this one's.
-            claude_frames = [f for f in frames if f.provider == "claude"]
+            claude_frames = [f for f in observed if f.provider == "claude"]
             weekly_anchor.observe(
                 claude_frames, weekly_anchor.anchor_path(), now)
         except Exception:

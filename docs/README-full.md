@@ -231,6 +231,8 @@ Blink has to change.
 | Leaves alone | every other key in `settings.json`, and the file's own formatting and permissions. Nothing is installed system-wide |
 | Keeps | the last status line payload Claude Code sent, in `~/.blink/statusline.json`. Alongside the two usage figures it carries the session id, working directory and transcript path; only the figures are read, and nothing in it leaves the machine |
 | Reads | Claude Desktop's usage cache and the tail of Codex's session log, when present; from each only the usage figures are kept. No credential, no token |
+| Reads | on a gateway account only: `adi-aie user-cost --monthly` (run as a subprocess, when installed) for the month's spend, and token counts and timestamps from Claude Code's transcripts under `~/.claude/projects` for today's estimated spend. No message text is kept |
+| Adds, only after `blink approve enable` | a `PermissionRequest` hook entry, and `~/.blink/approve/` (private to you). A request's file holds the command, path or URL Claude Code is asking about, and is deleted when the question closes. It is never written to the log. `blink approve disable` removes all of it |
 
 **It does this without asking**, so that plugging the board in is the whole
 setup. It prints all of the above before it changes anything, and every part
@@ -244,6 +246,21 @@ of it is reversible:
 your existing command, and runs it after capturing the usage figures - your bar
 renders exactly as before. Uninstalling puts your command back unchanged, and
 will not touch a status line Blink did not install.
+
+**Gateway accounts are configured by environment variables**, read by the daemon
+at start. Launchd gives it almost none of your shell, so set them under
+`EnvironmentVariables` in `~/Library/LaunchAgents/com.blink.bridge.plist`. That
+file is written by `blink install`, so set them again after reinstalling. All
+are optional:
+
+| Variable | Default | Sets |
+|---|---|---|
+| `BLINK_COST_LIMIT_USD` | 250 | the monthly budget, in dollars |
+| `BLINK_COST_CMD` | `adi-aie user-cost --monthly` | the command that reports the month's spend |
+| `BLINK_COST_REFRESH_S` | 600 | seconds between reads of that command |
+| `BLINK_DAILY_LIMIT_USD` | 30 | the daily limit for today's estimated spend |
+| `BLINK_SESSION_RATES` | 3,15,0.18,3.75 | prices, in USD per million tokens: input, output, cache read, cache write |
+| `BLINK_CLAUDE_PROJECTS` | `~/.claude/projects` | where the transcripts are read from |
 
 ## Programming a unit
 
@@ -271,6 +288,70 @@ config partition erased first (`esptool.py erase_region 0x3b0000 0x30000`).
 
 Pass `--port` to name a board when more than one is attached, and `--no-build`
 to reuse the last build.
+
+**A board on your own bench is not a unit to ship: use `tools/dev.sh flash`,
+not `burn.sh`.** `burn.sh` stamps the edition, and the stamp is write-once
+(above); a development board burned with it is a Claude or Codex unit for good,
+and undoing that means erasing its config partition. `dev.sh flash` stops the
+daemon, asks the chip whether it is fused (and refuses if it is, since it
+writes plaintext), builds, flashes at 115200 and restarts the daemon: the
+installed one if there was one, otherwise a throwaway one from this checkout so
+the board is still fed. It does not stamp. The board shows HOST LOST while the daemon is down, which is
+expected.
+
+### Flashing a bench board
+
+One command:
+
+```bash
+tools/dev.sh flash
+```
+
+It stops the installed daemon (the launchd job and, if it outlives the job, its
+process), reads `FLASH_CRYPT_CNT` and refuses a fused chip, builds, flashes at
+115200, and puts the installed daemon back if it stopped one, even on Ctrl-C.
+Nothing is run by
+hand around it. `PORT=/dev/cu.usbserial-XXXX` names the board when more than one
+is attached; the default is the first `/dev/cu.usbserial*`.
+
+The build is the **pilot-panel** one by default (`firmware/pilot.conf`), because
+that is what the bench board needs. Production units and the pilot boards carry
+different display modules: production firmware on a pilot panel comes out
+mirrored, red and blue swapped, and dim, and the reverse is wrong too
+(`BLINK_PANEL_PILOT` in `firmware/Kconfig`). A board with a production panel:
+`PILOT=0 tools/dev.sh flash`. Shipped units are built by `burn.sh`, which this
+default does not touch. The fuse state does not say which panel a board has. If
+the picture is mirrored, flash again with the other value; do **not** change
+`rotation` in the overlay, because 90 and 270 differ by a 180 degree turn and
+neither un-mirrors, and touch is solved against 90.
+
+`BLINK_SKIP_EFUSE_CHECK=1` overrides the fuse check and should not be used: a
+plaintext image on a fused chip will not boot.
+
+Then **look at the board**: orientation, no mirror, red and blue the right way
+round, touch landing where you press, still alive after 90 seconds. `dev.sh`
+prints that reminder at the end. Done means flashed and seen, not built.
+
+If something other than the Blink daemon holds the port, `dev.sh` says what and
+stops; it never kills a process it does not recognise.
+
+`dev.sh` builds without MCUboot, so a board flashed this way is not updatable
+over the air until it is re-flashed with `tools/burn.sh` (**unverified** on this
+board; `burn.sh` documents the effect of a plain `west flash`).
+
+If `dev.sh` says `cannot tell whether this chip is fused`, the cause is not
+always a busy port: it discards `espefuse`'s own error. Run
+`espefuse.py --port <port> summary` and read it. On 2026-10-15 it was an
+`ImportError: cannot import name 'BitStream' from 'bitstring'`: esptool does not
+cap `bitstring`, and 5.0 dropped that name. Fix it in the esptool environment
+with `pipx inject esptool 'bitstring<5' --force` (or
+`pip install 'bitstring<5'` in the venv).
+
+The scripts find the Zephyr workspace themselves (`tools/lib_zephyr.sh`,
+`BLINK_ZEPHYR` overrides). They are meant to be run, not sourced from an
+interactive zsh: with `nomatch` on, a candidate path that does not exist makes
+the lookup fail outright and it reads as "no workspace" on a machine that has
+one.
 
 **What it flashes is not the release artifact.** `zephyr.signed.bin` is signed
 but not *confirmed*: its MCUboot trailer says "boot this once". That is right
@@ -401,7 +482,7 @@ The things that were open before the first release, and how each was settled.
 
 - **Only you can update your device.** Firmware must be signed with your private key (kept off this repo, at `~/.blink/…`); the bootloader rejects anything else. App updates must be signed with a second key of yours, or the app will not install them. The public repo only lets people read and download the firmware, which holds no secrets.
 - **The device holds no credential.** It never signs in and never talks to Anthropic. The figures come from the Claude Code on your own machine, which has already worked them out, and reach the board over the cable. There is no token on the device to leak, and nothing to revoke if you sell or lend it.
-- **The setup touches one file.** `~/.claude/settings.json`: its `statusLine.command`, and a hook entry per lifecycle event - see "What the installer changes" above for exactly what is written and what is kept. All of it is reversible with one command.
+- **The setup touches one file.** `~/.claude/settings.json`: its `statusLine.command`, and a hook entry per lifecycle event - see "What the installer changes" above for exactly what is written and what is kept. All of it is reversible with one command. Board approvals (`blink approve enable`, off by default) add one more hook entry and are the only part that reads a tool's command or path; see the table above.
 - The on-device Wi-Fi and sign-in path still exists in this repository, behind `CONFIG_BLINK_WIFI_MODE`, but is **not built into shipped firmware** - the release script refuses to publish an image containing it.
 
 ## The status dot

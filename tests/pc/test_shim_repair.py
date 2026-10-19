@@ -42,6 +42,8 @@ def test_a_missing_shim_is_not_current(tmp_path):
     assert cli.shim_is_current(p, "blink-hook.sh") is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions: chmod 000"
+                    " does not stop a read on Windows")
 def test_an_unreadable_shim_is_not_current(tmp_path):
     """Answer the question rather than raising it.
 

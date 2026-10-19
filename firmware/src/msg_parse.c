@@ -67,6 +67,116 @@ bool msg_get_str(const char *json, const char *key, char *buf, size_t buflen)
 	return true;
 }
 
+static int hex4(const char *p)
+{
+	int v = 0;
+
+	for (int i = 0; i < 4; i++) {
+		char c = p[i];
+
+		v <<= 4;
+		if (c >= '0' && c <= '9') {
+			v |= c - '0';
+		} else if (c >= 'a' && c <= 'f') {
+			v |= c - 'a' + 10;
+		} else if (c >= 'A' && c <= 'F') {
+			v |= c - 'A' + 10;
+		} else {
+			return -1;
+		}
+	}
+	return v;
+}
+
+bool msg_get_str_esc(const char *json, const char *key, char *buf,
+		     size_t buflen, bool *truncated)
+{
+	if (truncated != NULL) {
+		*truncated = false;
+	}
+	if (buf == NULL || buflen == 0) {
+		return false;
+	}
+	buf[0] = '\0';
+
+	const char *p = after_colon(json, key);
+
+	if (p == NULL) {
+		return false;
+	}
+	while (*p == ' ' || *p == '\t') {
+		p++;
+	}
+	if (*p != '"') {
+		return false;
+	}
+	p++;
+
+	size_t n = 0;
+	bool cut = false;
+
+	for (;;) {
+		char out;
+
+		if (*p == '\0') {
+			buf[0] = '\0';
+			return false;		/* never terminated */
+		}
+		if (*p == '"') {
+			break;
+		}
+		if (*p == '\\') {
+			p++;
+			switch (*p) {
+			case '"':
+			case '\\':
+			case '/':
+				out = *p;
+				break;
+			case 'n':
+				out = '\n';
+				break;
+			case 't':
+			case 'r':
+			case 'b':
+			case 'f':
+				out = ' ';
+				break;
+			case 'u': {
+				int cp = hex4(p + 1);
+
+				if (cp < 0) {
+					buf[0] = '\0';
+					return false;
+				}
+				out = (cp >= 0x20 && cp <= 0x7e) ?
+					(char)cp : '?';
+				p += 4;
+				break;
+			}
+			default:
+				buf[0] = '\0';
+				return false;	/* not a JSON escape */
+			}
+		} else {
+			unsigned char c = (unsigned char)*p;
+
+			out = (c >= 0x20 && c <= 0x7e) ? (char)c : '?';
+		}
+		p++;
+		if (n + 1 < buflen) {
+			buf[n++] = out;
+		} else {
+			cut = true;
+		}
+	}
+	buf[n] = '\0';
+	if (truncated != NULL) {
+		*truncated = cut;
+	}
+	return true;
+}
+
 bool msg_get_double(const char *json, const char *key, double *out)
 {
 	const char *p = after_colon(json, key);

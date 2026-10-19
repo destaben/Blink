@@ -25,6 +25,8 @@ survives. Understating a limit is a real cost; inventing usage that has
 already been forgiven is a worse one, and it is the failure this project
 already spent code on (see pc/statusline_source._rolled_over).
 """
+import functools
+
 from pc.providers import base
 
 
@@ -214,6 +216,11 @@ def merge(frames):
         n_idle=state_src.n_idle if state_src else 0,
         n_agents=state_src.n_agents if state_src else 0,
         label=state_src.label if state_src else "",
+        # A dial is a spend dial if any frame that fed this merge says so.
+        # Fallback sources are only offered when no fresh plan window exists
+        # for their dial (pc/ingest.py), so there is nothing to disagree with.
+        cost_dials=functools.reduce(lambda a, f: a | f.cost_dials, frames, 0),
+        weekly_usd=max((f.weekly_usd for f in frames), default=0),
     )
 
 

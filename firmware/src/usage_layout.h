@@ -350,7 +350,11 @@
 #define PILL_BOTTOM_OFF		16
 #define PILL_PAD_V		2
 #define PILL_H			(FONT_LINE_H + 2 * PILL_PAD_V)
-#define PILL_MAX_W		140
+/* The pill reads "Claude adi-aie": the provider name plus where the numbers
+ * come from, fourteen characters. 160 keeps that clear of the clock and the
+ * status dot in the corners without LVGL cutting it short with dots. */
+#define PILL_SUFFIX		"adi-aie"
+#define PILL_MAX_W		160
 
 /*
  * Clearances the layout must keep. Named so a failure says which rule broke

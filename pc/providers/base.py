@@ -22,6 +22,11 @@ import dataclasses
 # re-encoded on the way.
 UNKNOWN = -1.0
 
+# The board's ceiling for a percentage (firmware/src/proto.c PCT_MAX). A figure
+# above it is clamped to it, never dropped: a spend account at ten times its
+# budget is real, and the meter should say "over" rather than go blank.
+PCT_CEILING = 1000.0
+
 # The execution states in the doc's live state machine. "" means this source
 # has nothing to say about execution state, which is different from "idle" --
 # idle is a claim, "" is a shrug, and only one of them should ever turn a
@@ -163,6 +168,20 @@ class NormalizedUsageFrame:
     # cwd that sanitises to nothing. Every other source leaves it empty and
     # the board falls back to the count.
     label: str = ""
+    # Which dials show spend against a budget instead of a plan window, as a
+    # bitmask: 1 = the session dial, 2 = the weekly dial. 0 is the normal case
+    # and is never put on the wire, so a plan account's messages are
+    # byte-for-byte what they were before spend sources existed. The board
+    # reads it to name the dials honestly (SESSION 5h / WEEKLY 7d versus
+    # TODAY / MONTH) -- see pc/ingest.py for who sets it.
+    cost_dials: int = 0
+    # Whole dollars spent this month, set ONLY once the monthly spend dial is
+    # at or past its budget; 0 otherwise. The budget can be raised on request
+    # and the daemon cannot read it from anywhere, so the percentage stops
+    # being the interesting number the moment it passes 100: the owner then
+    # wants the money. 0 is "not sent" and never "nothing spent", and it keeps
+    # every under-budget line and every plan account byte-for-byte as before.
+    weekly_usd: int = 0
 
     def __post_init__(self):
         if self.active_at is None:

@@ -34,6 +34,7 @@ target_sources(app PRIVATE
 	src/ota.c
 	src/ui_touchfx.c
 	src/usage_state.c
+	src/ui_approve.c
 	src/usage_freshness.c
 )
 
