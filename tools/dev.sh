@@ -110,10 +110,13 @@ up() {
 case "${1:-flash}" in
 flash)
 	down >/dev/null
-	stop_installed
-	# Put back on the way out whatever happens, a Ctrl-C mid-flash included.
+	# Registered BEFORE stop_installed: bootout can succeed and then the port
+	# check can exit 1 (a stranger holds it), and without this trap the
+	# installed daemon would stay unloaded. restore_installed does nothing
+	# unless the daemon was actually up, so registering it early is safe.
 	trap restore_installed EXIT
 	trap 'exit 130' INT TERM
+	stop_installed
 	# dev.sh writes PLAINTEXT. A fused chip's ROM cannot read that, and the
 	# board goes dark until tools/flash_encrypted.sh restores it -- the exact
 	# mirror of the mistake that script refuses. Ask the chip, before the build.
