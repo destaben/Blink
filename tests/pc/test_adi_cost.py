@@ -3,7 +3,7 @@ import datetime
 import json
 import os
 
-from pc.providers import adi_cost
+from pc.providers import adi_cost, base
 from pc.providers.adi_cost import AdiCostProvider, next_month_start, parse_spend
 
 OUT = ("\n✔ $235.22 spent so far this month (2026-10)\n"
@@ -74,10 +74,22 @@ def test_reset_is_the_first_of_next_month():
     assert (reset.year, reset.month, reset.day) == (2027, 1, 1)
 
 
-def test_over_budget_is_a_real_reading_far_over_is_not():
+def test_over_budget_is_a_real_reading_however_far_over():
+    # Far past the budget is real spend and must still read as over budget:
+    # it is clamped to the board's ceiling, not dropped (a dropped frame sent
+    # a spend account at ten times its budget to a blank dial, 2026-10-19).
     p = _provider(lambda argv: OUT)
     assert p.parse_output("✔ $260.00 spent so far", NOW).weekly_pct > 100
-    assert p.parse_output("✔ $999999.00 spent so far", NOW) is None
+    far = p.parse_output("✔ $999999.00 spent so far", NOW)
+    assert far.weekly_pct == base.PCT_CEILING
+    assert far.weekly_usd == 999999
+
+
+def test_a_figure_that_overflows_a_float_is_unreadable_not_infinite():
+    # 400 digits parse to inf, and the frame's int(round(spend)) would raise.
+    huge = "✔ $" + "9" * 400 + ".00 spent so far"
+    assert parse_spend(huge) is None
+    assert _provider(lambda argv: huge).parse_output(huge, NOW) is None
 
 
 def test_poll_returns_the_last_good_reading_after_a_failure():

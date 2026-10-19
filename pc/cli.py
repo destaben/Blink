@@ -2516,7 +2516,7 @@ def board_lines(known, ports, undriven=(), blink_cmd="blink"):
         # is the first thing anyone runs when nothing works. So it names the
         # other possibility instead of guessing between them. The panel has
         # the same question and no room for this sentence --
-        # docs/open-bugs/app-is-old-is-a-guess.md.
+        # docs/app-is-old-is-a-guess.md.
         out.append("            (if that finds nothing, this board is ahead"
                    " of the published release)")
     return out
@@ -2599,6 +2599,12 @@ def _source_lines():
                   f" {_age(age)} old")
             for line in desktop_staleness_note(age):
                 print(f"            {line}")
+        elif claude_desktop.file_is_json(desktop.path()):
+            # Well-formed, so not a format change: the app has not written a
+            # figure yet. Saying "did not parse" here sent a reader off to
+            # report a fault that was not there (2026-10-19).
+            print("Desktop     usage cache present, no usage figures in it yet"
+                  " (the app writes them after its first sample)")
         else:
             print("Desktop     usage cache present but did not parse --"
                   " the app's file format may have changed; please report it")

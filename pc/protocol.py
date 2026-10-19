@@ -79,6 +79,11 @@ COUNTDOWN_MAX_S = 999999
 # build stays under the cap.
 MONTH_COUNTDOWN_MAX_S = 31 * 86400
 
+# Dollars spent this month, as the board accepts them (firmware/src/proto.c
+# num("usd", 0, 99999)). Five digits: a spend account past $99,999 shows that
+# figure rather than losing the field altogether.
+USD_MAX = 99999
+
 
 def encode_checked(msg: dict):
     """encode(), but None when the result could not be received.
@@ -366,8 +371,10 @@ The firmware reads this field: proto.c's "usage" handler calls
     # Dollars spent this month, only once a spend account is past its budget.
     # Absent on every other line, so the widest line the daemon builds today
     # does not grow; see tests/pc/test_protocol.py for the worst case with it.
+    # Clamped to the firmware's bound (proto.c num(..., 0, 99999)): a value
+    # above it is not an error there, it is dropped, and the dollars vanish.
     if weekly_usd and weekly_usd > 0:
-        extra["usd"] = int(weekly_usd)
+        extra["usd"] = min(int(weekly_usd), USD_MAX)
     if state:
         extra["state"] = state
 

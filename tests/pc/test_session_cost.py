@@ -121,6 +121,17 @@ def test_dial_is_todays_cost_over_the_daily_limit(tmp_path):
     assert f.cost_dials == 1
 
 
+def test_far_over_the_daily_limit_the_dial_reads_full_not_blank(tmp_path):
+    # $375 against the default $30 is twelve times over. Dropping the frame
+    # here blanked the dial exactly when the spend was worst (2026-10-19).
+    _project(tmp_path, [_msg("a", out=25_000_000)])
+    p = _provider(tmp_path)
+    p._refresh()
+    frames = p.poll(NOW)
+    assert len(frames) == 1
+    assert frames[0].session_pct == base.PCT_CEILING
+
+
 def test_the_countdown_runs_to_local_midnight(tmp_path):
     _project(tmp_path, [_msg("a", out=1)])
     p = _provider(tmp_path)

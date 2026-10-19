@@ -128,6 +128,26 @@ def test_a_missing_file_polls_empty_and_says_nothing(tmp_path):
     assert p.poll(NOW) == []
 
 
+def test_a_well_formed_cache_with_no_figures_is_not_called_a_parse_failure(
+        tmp_path, capsys):
+    # The app writes an empty usage object until its first sample. That is
+    # not a format change, and the message used to say it was (2026-10-19).
+    f = tmp_path / "plan-usage-history.json"
+    f.write_text(json.dumps({"version": 2, "samples": [{"t": 1, "u": {}}]}))
+    p = ClaudeDesktopProvider(path=str(f))
+    assert p.poll(NOW) == []
+    assert "has no usage figures in it yet" in capsys.readouterr().err
+    assert claude_desktop.file_is_json(str(f))
+
+
+def test_a_truncated_cache_is_still_called_a_parse_failure(tmp_path, capsys):
+    f = tmp_path / "plan-usage-history.json"
+    f.write_text('{"version": 2, "samples": [')
+    assert ClaudeDesktopProvider(path=str(f)).poll(NOW) == []
+    assert "did not parse as a usage cache" in capsys.readouterr().err
+    assert not claude_desktop.file_is_json(str(f))
+
+
 def test_poll_reads_a_real_file(tmp_path):
     f = tmp_path / "plan-usage-history.json"
     f.write_text(_doc([_sample(int(NOW * 1000), 11, 22)]))

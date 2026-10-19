@@ -5,9 +5,8 @@ line nor Claude Desktop carries the 5-hour / 7-day plan windows the board is
 built to show. What it does have is a monthly dollar figure and a fixed budget,
 and that is a percentage like any other: spend / limit.
 
-It is reported on the WEEKLY dial. The board's dials are labelled by the
-firmware, not by the frame, so the caption still says the weekly name until the
-firmware is relabelled.
+It is reported on the weekly slot. The board labels that slot MONTH for a cost
+account (firmware/src/usage_view.c, cost_dials bit 2), not WEEKLY 7d.
 
 The number is a best-effort estimate: the command itself warns that billing
 can lag by up to 24 hours and may read 0.00. So the frame says exactly when the
@@ -23,6 +22,7 @@ started by launchd with almost none of the user's shell:
     BLINK_COST_REFRESH_S   seconds between reads      (default 600)
 """
 import datetime
+import math
 import os
 import re
 import shlex
@@ -64,9 +64,12 @@ def parse_spend(text):
     if not m:
         return None
     try:
-        return float(m.group(1).replace(",", ""))
+        value = float(m.group(1).replace(",", ""))
     except ValueError:
         return None
+    # A figure of hundreds of digits parses to inf, and int(round(inf)) in
+    # _frame would raise OverflowError. Unreadable is the honest answer.
+    return value if math.isfinite(value) else None
 
 
 def next_month_start(now_epoch):
@@ -167,10 +170,13 @@ class AdiCostProvider(ProviderParser):
 
     def _frame(self, spend, read_at, now_epoch):
         pct = spend / self._limit * 100.0
-        # base._pct-style range check: far past the budget means a misread,
-        # and "--" is a better answer than a meter pinned to nonsense.
-        if not (0 <= pct <= 1000):
+        # A negative or unreadable figure is a misread, and "--" is a better
+        # answer than a meter pinned to nonsense. Past the ceiling is not a
+        # misread: it is real spend, so it is clamped to the board's maximum
+        # and the meter still reads over budget (dropping it went blank).
+        if not (pct >= 0):
             return None
+        pct = min(pct, base.PCT_CEILING)
         return NormalizedUsageFrame(
             provider=PROVIDER_ID, src=SRC_ID, observed_at=read_at,
             session_pct=base.UNKNOWN,

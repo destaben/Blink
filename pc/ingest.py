@@ -60,8 +60,8 @@ def default_providers():
             # Monthly spend against a fixed budget, for an account whose plan
             # windows no other source can see. Silent when adi-aie is absent.
             AdiCostProvider(),
-            # This session's cost as a share of that budget, estimated from
-            # its transcript, for the dial the plan's 5 h window would fill.
+            # Today's cost across every transcript modified today, as a share
+            # of the daily budget, for the dial the plan's 5 h window would fill.
             SessionCostProvider(),
             # LAST: it only ever offers a remembered projection, and every
             # source above it is polled first so any of them carrying a real

@@ -74,6 +74,30 @@ def cache_path():
     return os.path.expanduser("~/.config/Claude/plan-usage-history.json")
 
 
+def _is_json(text):
+    """True when `text` is valid JSON, whatever it holds.
+
+    Told apart from a file that will not parse at all, because they mean
+    different things: valid JSON with no percentages is an app that has not
+    taken a sample yet (its usage is written empty until it has), while a file
+    that will not parse may be a format change worth reporting.
+    """
+    try:
+        json.loads(text)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def file_is_json(path):
+    """_is_json for the cache file at `path`; False if it cannot be read."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return _is_json(f.read())
+    except OSError:
+        return False
+
+
 def _pct(u: dict, key: str) -> float:
     """One percentage out of a sample's `u` object, or UNKNOWN.
 
@@ -409,7 +433,9 @@ class ClaudeDesktopProvider(base.ProviderParser):
         frame = self.parse_cache_file(content, now_epoch)
         if frame is None:
             if self._complained_about != path:
-                print(f"[desktop] {path} did not parse as a usage cache;"
+                what = ("has no usage figures in it yet" if _is_json(content)
+                        else "did not parse as a usage cache")
+                print(f"[desktop] {path} {what};"
                       " ignoring this source", file=sys.stderr)
                 self._complained_about = path
             return []

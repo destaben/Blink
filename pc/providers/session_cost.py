@@ -238,8 +238,9 @@ class SessionCostProvider(ProviderParser):
         if day != day_start(now_epoch):
             return []
         pct = cost / self._limit * 100.0
-        if not (0 <= pct <= 1000):
+        if not (pct >= 0):
             return []
+        pct = min(pct, base.PCT_CEILING)
         return [NormalizedUsageFrame(
             provider=PROVIDER_ID, src=SRC_ID, observed_at=read_at,
             session_pct=pct, session_resets_at=next_day_start(now_epoch),

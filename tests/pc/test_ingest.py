@@ -1060,3 +1060,50 @@ def test_the_once_per_process_flag_survives_the_move(monkeypatch):
     bus.poll_frames()
     assert len(calls) == 1
     assert bus._seeded is True
+
+
+# --- spend sources are fallbacks, and never teach the weekly anchor ---------
+
+from pc.providers.adi_cost import AdiCostProvider  # noqa: E402
+
+
+def _spend(weekly=212.6):
+    return base.NormalizedUsageFrame(
+        provider="claude", src=AdiCostProvider.SRC,
+        observed_at=NOW, session_pct=base.UNKNOWN, weekly_pct=weekly)
+
+
+def test_a_fresh_plan_window_beats_the_spend_fallback_on_its_dial():
+    bus = ingest.IngestionBus(
+        providers=[Fixed(frame("claude", "cli", session=10.0, weekly=20.0)),
+                   Fixed(_spend())],
+        now=lambda: NOW)
+    assert [f.src for f in bus.poll_frames()] == ["cli"]
+
+
+def test_a_stale_plan_window_does_not_beat_the_spend_fallback():
+    stale = base.NormalizedUsageFrame(
+        provider="claude", src="cli", observed_at=NOW,
+        session_pct=10.0, weekly_pct=20.0, stale=True)
+    bus = ingest.IngestionBus(providers=[Fixed(stale), Fixed(_spend())],
+                              now=lambda: NOW)
+    assert AdiCostProvider.SRC in [f.src for f in bus.poll_frames()]
+
+
+def test_the_spend_fallback_fills_its_dial_when_nothing_else_does():
+    bus = ingest.IngestionBus(providers=[Fixed(_spend())], now=lambda: NOW)
+    assert [f.src for f in bus.poll_frames()] == [AdiCostProvider.SRC]
+
+
+def test_spend_frames_never_reach_the_weekly_anchor(monkeypatch):
+    # A month-end reset is not a weekly boundary. If a spend frame were
+    # observed, WeeklyAnchorProvider would project a monthly reset as weekly.
+    seen = []
+    monkeypatch.setattr(ingest.weekly_anchor, "observe",
+                        lambda frames, path, now: seen.extend(frames))
+    bus = ingest.IngestionBus(
+        providers=[Fixed(frame("claude", "cli", session=10.0, weekly=20.0)),
+                   Fixed(_spend())],
+        now=lambda: NOW)
+    bus.poll_frames()
+    assert [f.src for f in seen] == ["cli"]

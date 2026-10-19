@@ -459,6 +459,14 @@ def test_dollars_are_on_the_wire_only_when_set():
     assert protocol.usage(weekly_usd=531, **base_kw)["usd"] == 531
 
 
+def test_dollars_past_the_board_bound_are_clamped_not_dropped():
+    # The board drops a usd above 99999 without a word (proto.c num() range),
+    # so a $120,000 month would show no dollars at all. Clamp it instead.
+    base_kw = dict(session_pct=10.0, session_resets_at=None, weekly_pct=50.0,
+                   weekly_resets_at=None, models=[], cost_dials=2)
+    assert protocol.usage(weekly_usd=120000, **base_kw)["usd"] == protocol.USD_MAX
+
+
 def test_a_countdown_beyond_any_real_window_is_clamped():
     """A year-long countdown is a misparse, and it is eight digits wide.
 

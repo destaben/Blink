@@ -22,6 +22,11 @@ import dataclasses
 # re-encoded on the way.
 UNKNOWN = -1.0
 
+# The board's ceiling for a percentage (firmware/src/proto.c PCT_MAX). A figure
+# above it is clamped to it, never dropped: a spend account at ten times its
+# budget is real, and the meter should say "over" rather than go blank.
+PCT_CEILING = 1000.0
+
 # The execution states in the doc's live state machine. "" means this source
 # has nothing to say about execution state, which is different from "idle" --
 # idle is a claim, "" is a shrug, and only one of them should ever turn a
