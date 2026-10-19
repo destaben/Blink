@@ -274,11 +274,13 @@ def test_homebrew_location_wins_then_anywhere_on_path(tmp_path, monkeypatch):
     # found globally
     monkeypatch.setenv("PATH", str(tmp_path))
     assert adi_cost.installed() is True
-    assert adi_cost._resolve_command()[0] == str(exe)
+    # normcase: shutil.which spells the PATHEXT suffix as the registry does
+    # (adi-aie.EXE) on Windows, which is the same file as adi-aie.exe.
+    assert os.path.normcase(adi_cost._resolve_command()[0]) == os.path.normcase(str(exe))
     # the Homebrew path is preferred when present
     monkeypatch.setattr(adi_cost, "HOMEBREW_BIN", str(exe))
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
-    assert adi_cost._resolve_command()[0] == str(exe)
+    assert os.path.normcase(adi_cost._resolve_command()[0]) == os.path.normcase(str(exe))
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions: Windows has"
