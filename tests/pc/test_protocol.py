@@ -1032,3 +1032,22 @@ def test_changing_the_mode_is_news_worth_a_push():
     b = protocol.frame_to_usage(_frame(session_pct=1.0, cost_dials=1),
                                 1_787_000_000.0)
     assert protocol.meaningful_usage(a) != protocol.meaningful_usage(b)
+
+
+def test_only_the_monthly_window_may_run_past_the_twelve_day_ceiling():
+    """The 12-day clamp is the honesty rule for every weekly countdown. The
+    31-day cap is granted to the monthly window alone (cost_dials bit 2)."""
+    now = 1_787_200_000
+    far = now + 20 * 86400
+    plain = base.NormalizedUsageFrame(
+        provider="claude", src="cli", observed_at=now,
+        session_pct=1.0, session_resets_at=now + 3600,
+        weekly_pct=2.0, weekly_resets_at=far)
+    assert protocol.frame_to_usage(plain, now)["weekly_resets_in_s"] \
+        == protocol.COUNTDOWN_MAX_S
+    monthly = base.NormalizedUsageFrame(
+        provider="claude", src="adi-cost", observed_at=now,
+        session_pct=1.0, session_resets_at=now + 3600,
+        weekly_pct=2.0, weekly_resets_at=far, cost_dials=2)
+    assert protocol.frame_to_usage(monthly, now)["weekly_resets_in_s"] \
+        == 20 * 86400

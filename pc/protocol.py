@@ -234,11 +234,12 @@ def _round_pct(v):
 
 def usage(session_pct, session_resets_at, weekly_pct, weekly_resets_at, models,
           session_resets_in_s=-1, weekly_resets_in_s=-1, stale=False,
-          provider="claude", src="cli", cost_dials=0, state="", n_sess=0, n_run=0, n_wait=0, n_stuck=0,
+          provider="claude", src="cli", state="", n_sess=0, n_run=0, n_wait=0, n_stuck=0,
           n_agents=0, p2="", p2_session_pct=UNKNOWN,
           p2_weekly_pct=UNKNOWN, p2_session_resets_in_s=-1,
           p2_weekly_resets_in_s=-1, p2_stale=False, burn_pph=None,
-          age_s=-1, p2_age_s=-1, active_age_s=-1, weekly_usd=0) -> dict:
+          age_s=-1, p2_age_s=-1, active_age_s=-1, weekly_usd=0,
+          cost_dials=0) -> dict:
     """A usage message.
 
     The *_resets_in_s fields carry the remaining seconds. The board has no
@@ -549,8 +550,12 @@ def frame_to_usage(frame, now_epoch: float, secondary=None) -> dict:
         frame.weekly_pct, frame.weekly_resets_at,
         [],
         session_resets_in_s=secs_until(frame.session_resets_at, now_epoch),
-        weekly_resets_in_s=secs_until(frame.weekly_resets_at, now_epoch,
-                                      MONTH_COUNTDOWN_MAX_S),
+        # Only the monthly window (cost_dials bit 2, adi_cost) may exceed the
+        # 12-day ceiling. Every other weekly countdown keeps it, so a misparsed
+        # reset stamp still reads as "a long time" and not as a month.
+        weekly_resets_in_s=secs_until(
+            frame.weekly_resets_at, now_epoch,
+            MONTH_COUNTDOWN_MAX_S if frame.cost_dials & 2 else COUNTDOWN_MAX_S),
         stale=frame.stale,
         provider=frame.provider, src=frame.src,
         cost_dials=frame.cost_dials,

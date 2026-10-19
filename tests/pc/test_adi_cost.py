@@ -294,3 +294,11 @@ def test_non_executable_homebrew_file_does_not_count(tmp_path, monkeypatch):
     monkeypatch.setattr(adi_cost, "_EXTRA_PATH", ())
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     assert adi_cost.installed() is False
+
+
+def test_the_per_user_bin_is_read_under_the_current_home(tmp_path, monkeypatch):
+    """Expanded at import this would name the real home before any test's HOME
+    redirect runs, and a developer's own adi-aie would be found."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    assert adi_cost._extra_path()[-1] == os.path.join(str(tmp_path), ".local", "bin")

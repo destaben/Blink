@@ -102,7 +102,7 @@ static void tick_cb(lv_timer_t *t)
 		return;
 	}
 	if (left_lbl) {
-		lv_label_set_text_fmt(left_lbl, "or answer at the computer  %ds",
+		lv_label_set_text_fmt(left_lbl, "Or answer at the computer  %ds",
 				      (int)((expires_ms - now + 999) / 1000));
 	}
 }
@@ -292,5 +292,12 @@ bool ui_approve_take_answer(char *id, size_t idlen, int *res)
 
 void ui_approve_decline(const char *id)
 {
+	/* A tap already queued is the person's own answer, and it outranks a
+	 * decline for any request. Overwriting it would turn an Allow into the
+	 * keyboard prompt, silently. The declined request falls back to the
+	 * keyboard either way, so dropping this decline costs nothing. */
+	if (ans_pending) {
+		return;
+	}
 	queue_answer(id, UI_APPROVE_DECLINE);
 }

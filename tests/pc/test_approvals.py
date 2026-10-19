@@ -486,3 +486,37 @@ def test_an_older_board_that_stops_saying_it_is_no_longer_offered(tmp_path):
     assert b._board_approve
     b.on_message({"t": "pref", "v": 2, "provider": "claude"})
     assert not b._board_approve
+
+
+def test_a_request_whose_tool_is_not_a_string_is_declined_not_raised(tmp_path):
+    """The tool comes off disk. A list is unhashable, and raising here would
+    escape poll() into the daemon's read loop."""
+    d = _d(tmp_path)
+    _req(d, tool=["Bash"])
+    dm = _Daemon(d)
+    dm.poll()
+    assert dm.sent == []
+    assert open(os.path.join(d, "ab12cd34.res")).read() == "decline"
+
+
+def test_without_a_board_a_killed_hooks_request_is_still_swept(tmp_path):
+    """The command text must not wait for a board to reconnect to be removed."""
+    d = _d(tmp_path)
+    _req(d, ttl=5)
+    dm = _Daemon(d)
+    dm.poll(usable=False)
+    dm.t[0] += 600
+    dm.poll(usable=False)
+    assert not os.path.exists(os.path.join(d, "ab12cd34.req"))
+
+
+def test_a_tap_after_the_hook_left_leaves_no_res_file(tmp_path):
+    d = _d(tmp_path)
+    _req(d)
+    dm = _Daemon(d)
+    dm.poll()
+    os.remove(os.path.join(d, "ab12cd34.req"))     # the hook has exited
+    with open(os.path.join(d, "ab12cd34.res"), "w") as f:
+        f.write("allow")                            # a tap in the gap
+    dm.poll()
+    assert not os.path.exists(os.path.join(d, "ab12cd34.res"))

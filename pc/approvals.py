@@ -301,11 +301,14 @@ class Approvals:
             self._state.clear()
             return
         ready = os.path.join(d, READY_NAME)
+        # With no usable board nothing is offered, but the sweep below still
+        # runs: a hook killed mid-question leaves its .req (the command text)
+        # behind, and that file must not wait for a board to reappear.
+        offering = usable
         if not usable:
             _unlink(ready)
             self._state.clear()
-            return
-        if t - self._last_touch >= READY_TOUCH_EVERY_S:
+        elif t - self._last_touch >= READY_TOUCH_EVERY_S:
             try:
                 with open(ready, "a", encoding="utf-8"):
                     pass
@@ -345,7 +348,7 @@ class Approvals:
             seen.add(req_id)
             if age > ttl:
                 continue                  # the hook has stopped waiting
-            if req_id not in self._state:
+            if offering and req_id not in self._state:
                 self._offer(d, req_id, req, ttl - max(age, 0.0))
 
         for req_id in list(self._state):
@@ -354,10 +357,18 @@ class Approvals:
                 if kind == "offered":
                     self._write(protocol.approve_end(req_id))
                 del self._state[req_id]
+                # The hook has stopped waiting, so an answer written after
+                # this point has no reader. A tap that landed in the gap
+                # leaves its .res behind; nothing else would remove it.
+                _unlink(os.path.join(d, req_id + ".res"))
 
     def _offer(self, d, req_id, req, ttl_left):
-        found = summarize(req.get("tool"), {TOOL_KEYS.get(req.get("tool"), ""):
-                                            req.get("text")})
+        # The tool comes off disk, so it may not be a string at all. A list
+        # here is unhashable, and the TypeError would escape poll() into the
+        # daemon's read loop. summarize() already rejects a non-string tool.
+        tool = req.get("tool")
+        key = TOOL_KEYS.get(tool, "") if isinstance(tool, str) else ""
+        found = summarize(tool, {key: req.get("text")})
         msg = None
         if found is not None:
             msg = protocol.approve_req(req_id, found[0], found[1],

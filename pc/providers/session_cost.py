@@ -145,7 +145,13 @@ class _Transcript:
                 continue
             u = m.get("usage")
             if isinstance(u, dict):
-                key = m.get("id") or d.get("uuid") or len(self.usage)
+                # The id comes out of a transcript the user may not have
+                # written, and a list or dict here is unhashable. That raises
+                # TypeError, which _refresh does not catch, so the session
+                # dial would freeze. Only a string is a usable key.
+                key = m.get("id") or d.get("uuid")
+                if not isinstance(key, str):
+                    key = len(self.usage)
                 self.usage[key] = (_epoch(d.get("timestamp")), u)
         self.offset += end
 

@@ -48,9 +48,14 @@ COMMAND_TIMEOUT_S = 30.0
 STALE_AFTER_S = 3 * 3600.0
 
 # launchd starts the daemon with a bare PATH, so look where the tool lives on
-# the machines this team uses as well as on PATH.
-_EXTRA_PATH = ("/opt/homebrew/bin", "/usr/local/bin",
-               os.path.expanduser("~/.local/bin"))
+# the machines this team uses as well as on PATH. The per-user bin is added at
+# call time (_extra_path): expanded here it would read the real home before any
+# test's HOME redirect runs, and find a developer's own adi-aie.
+_EXTRA_PATH = ("/opt/homebrew/bin", "/usr/local/bin")
+
+
+def _extra_path():
+    return _EXTRA_PATH + (os.path.join(os.path.expanduser("~"), ".local", "bin"),)
 
 # "✔ $235.22 spent so far this month (2026-10)"
 _SPENT = re.compile(r"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+spent")
@@ -101,7 +106,7 @@ def _find_adi_aie():
     if os.path.isfile(HOMEBREW_BIN) and os.access(HOMEBREW_BIN, os.X_OK):
         return HOMEBREW_BIN
     return shutil.which("adi-aie", path=os.pathsep.join(
-        [os.environ.get("PATH", "")] + list(_EXTRA_PATH)))
+        [os.environ.get("PATH", "")] + list(_extra_path())))
 
 
 def _resolve_command():
@@ -111,7 +116,7 @@ def _resolve_command():
         return None
     if raw:
         exe = shutil.which(argv[0], path=os.pathsep.join(
-            [os.environ.get("PATH", "")] + list(_EXTRA_PATH)))
+            [os.environ.get("PATH", "")] + list(_extra_path())))
     else:
         exe = _find_adi_aie()
     if exe is None:

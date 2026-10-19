@@ -250,3 +250,16 @@ def test_a_weekly_only_plan_frame_does_not_block_session_spend(tmp_path):
         provider="claude", src="cli", observed_at=NOW, weekly_pct=50.0)
     srcs = sorted(f.src for f in _bus(_Fixed([weekly_only]), p).poll_frames())
     assert srcs == ["cli", "session-cost"]
+
+
+def test_a_transcript_id_that_is_not_a_string_does_not_freeze_the_dial(tmp_path):
+    """A list id is unhashable. Before the guard it raised TypeError, which
+    _refresh does not catch, and the session dial stopped updating."""
+    odd = json.dumps({"uuid": "u-odd", "timestamp": _iso(NOW), "message": {
+        "id": ["not", "a", "string"], "role": "assistant",
+        "usage": {"output_tokens": 1_000_000}}}) + "\n"
+    _project(tmp_path, [odd, _msg("a", out=1_000_000)])
+    p = _provider(tmp_path)
+    p._refresh()
+    f = p.poll(NOW)[0]
+    assert round(f.session_pct, 2) == 100.0   # both messages: $15 + $15 of $30

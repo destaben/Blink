@@ -312,6 +312,10 @@ int main(void)
 	 * the corners. */
 	CHECK(BUDGET_FITS(PILL_MAX_W, "Claude " PILL_SUFFIX),
 	      "PILL_MAX_W is sized for the shipped pill text, not guessed");
+	/* The longest tag the buffer holds, not only the one shipped today: a
+	 * longer provider name must still fit the pill it will be drawn in. */
+	CHECK(BUDGET_FITS(PILL_MAX_W, "claude code " PILL_SUFFIX),
+	      "PILL_MAX_W holds the longest tag the buffer can hold");
 	/* The status line replaced a 140 px name with a whole sentence, so it
 	 * needs the width the name never did -- and it must still clear the
 	 * bezel. */
