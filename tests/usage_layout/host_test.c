@@ -307,11 +307,11 @@ int main(void)
 	      "GAUGE_CD_MAX_W is sized for a bare countdown, not guessed");
 	CHECK(!BUDGET_FITS(GAUGE_CD_MAX_W, "claude  00m 00s"),
 	      "GAUGE_CD_MAX_W no longer has room for a named one");
-	/* Sized for the LONGEST tag the buffer can hold, not the one we happen
-	 * to ship: provider1_tag is char[12], so eleven characters is what has
-	 * to fit without reaching the clock and the status dot in the corners. */
-	CHECK(BUDGET_FITS(PILL_MAX_W, "claude code"),
-	      "PILL_MAX_W is sized for the longest tag, not guessed");
+	/* Sized for what the pill actually says: the provider name and the source
+	 * suffix. It must fit without reaching the clock and the status dot in
+	 * the corners. */
+	CHECK(BUDGET_FITS(PILL_MAX_W, "Claude " PILL_SUFFIX),
+	      "PILL_MAX_W is sized for the shipped pill text, not guessed");
 	/* The status line replaced a 140 px name with a whole sentence, so it
 	 * needs the width the name never did -- and it must still clear the
 	 * bezel. */

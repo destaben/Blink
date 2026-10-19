@@ -1972,6 +1972,47 @@ def cmd_install(_args) -> int:
     return 0
 
 
+def cmd_approve(args) -> int:
+    """`blink approve enable|disable|status`: answer permission prompts on the board."""
+    from pc import approvals
+    action = args.action
+    if action == "status":
+        on = approvals.enabled(settings_path(), installed_bin())
+        print("Board approvals: " + ("on" if on else "off"))
+        return 0
+    if action == "disable":
+        print(approvals.disable(settings_path(), installed_bin()))
+        return 0
+    # enable
+    print("Board approvals.")
+    print()
+    print("  When Claude Code asks permission to run a command or touch a file,")
+    print("  the board shows the question with Allow and Deny. A tap answers it.")
+    print("  The prompt at the keyboard is never removed: anything the board")
+    print("  cannot show whole, or does not answer in time, is asked there.")
+    print()
+    print("  What this changes. Blink's activity hooks read no tool arguments at")
+    print("  all. This one reads exactly one thing per request: the command, the")
+    print("  file path or the URL being asked about. It goes to the board over")
+    print("  the cable and is held in ~/.blink/approve (private to you) only while")
+    print("  the question is open. It is never written to the log.")
+    print()
+    print("  Covers: Bash, Edit, Write, MultiEdit, NotebookEdit, Read, WebFetch.")
+    print("  File tools show the PATH, not the edit. Undo:  blink approve disable")
+    print()
+    try:
+        print(approvals.enable(settings_path(), installed_bin()))
+    except install_statusline.SettingsUnreadable as e:
+        print(f"Nothing was changed. {e}")
+        return 1
+    return 0
+
+
+def cmd_approve_hook(_args) -> int:
+    from pc import approvals
+    return approvals.hook_main()
+
+
 def cmd_uninstall(_args) -> int:
     print("Blink uninstall.")
     print()
@@ -1997,6 +2038,13 @@ def cmd_uninstall(_args) -> int:
     except install_statusline.SettingsUnreadable as e:
         # Same reasoning as the step above: keep going, and never "repair" a
         # file we cannot parse by writing a fresh one over it.
+        print(f"      Left alone: {e}")
+
+    try:
+        from pc import approvals
+        if approvals.enabled(settings_path(), installed_bin()):
+            print("      " + approvals.disable(settings_path(), installed_bin()))
+    except install_statusline.SettingsUnreadable as e:
         print(f"      Left alone: {e}")
 
     print("[4/5] Codex hooks:")
@@ -2852,6 +2900,12 @@ def main(argv=None) -> int:
         "--wire", action="store_true",
         help="Also print the usage message the bridge would send the board"
              " right now, as one JSON line")
+    approve_p = sub.add_parser(
+        "approve",
+        help="Answer Claude Code permission prompts on the board (opt-in)")
+    approve_p.add_argument("action", choices=["enable", "disable", "status"])
+    # Run by Claude Code, not by a person; kept out of --help.
+    sub.add_parser("approve-hook", help=argparse.SUPPRESS)
     sub.add_parser("update", help="Fetch a newer version of this app")
     sub.add_parser("driver",
                    help="Install the board's USB driver (Windows only)")
@@ -2880,6 +2934,8 @@ def main(argv=None) -> int:
         "install": cmd_install,
         "uninstall": cmd_uninstall,
         "status": cmd_status,
+        "approve": cmd_approve,
+        "approve-hook": cmd_approve_hook,
         "update": cmd_update,
         "driver": cmd_driver,
         "provision": cmd_provision,

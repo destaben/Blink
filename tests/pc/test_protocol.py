@@ -419,6 +419,46 @@ def test_the_widest_line_the_daemon_can_build_still_fits():
     assert len(raw) <= protocol.MAX_LINE_BYTES, len(raw)
 
 
+def test_the_widest_spend_line_with_dollars_still_fits():
+    """A spend account past its budget adds `cd` and `usd` to the widest line.
+
+    Same fixture as test_the_widest_line_the_daemon_can_build_still_fits, plus
+    both spend keys at their widest (`usd` is five digits at the proto.c
+    bound). Measured at 470 of 512 when added. Built through frame_to_usage
+    for the same reason: it is the only caller that can put a line on the
+    wire.
+    """
+    now = 1_787_700_000.0
+
+    def widest(provider, **kw):
+        return base.NormalizedUsageFrame(
+            provider=provider, src="cli-state",
+            observed_at=now - 2147483647, active_at=now - 2147483647,
+            session_pct=102.33333333333333,
+            session_resets_at=now + 31536000.1234567,
+            weekly_pct=102.66666666666667,
+            weekly_resets_at=now + 31536000.1234567,
+            state="running", stale=False, session_burn_pph=999.93333,
+            n_run=99, n_wait=99, n_stuck=99, n_idle=99, n_agents=99,
+            label="a-project-with-a-long-name", **kw)
+
+    msg = protocol.frame_to_usage(
+        widest("claude", cost_dials=3, weekly_usd=99999), now,
+        secondary=widest("codex"))
+    raw, why = protocol.encode_checked(msg)
+    assert why is None
+    assert msg["usd"] == 99999
+    assert len(raw) <= protocol.MAX_LINE_BYTES, len(raw)
+
+
+def test_dollars_are_on_the_wire_only_when_set():
+    base_kw = dict(session_pct=10.0, session_resets_at=None, weekly_pct=50.0,
+                   weekly_resets_at=None, models=[], cost_dials=2)
+    assert "usd" not in protocol.usage(**base_kw)
+    assert "usd" not in protocol.usage(weekly_usd=0, **base_kw)
+    assert protocol.usage(weekly_usd=531, **base_kw)["usd"] == 531
+
+
 def test_a_countdown_beyond_any_real_window_is_clamped():
     """A year-long countdown is a misparse, and it is eight digits wide.
 
@@ -927,3 +967,60 @@ class VolatileUsageKeys(unittest.TestCase):
         msg = dict(self._loaded(), some_field_from_2027=7)
         self.assertEqual(
             protocol.meaningful_usage(msg)["some_field_from_2027"], 7)
+
+
+def test_a_month_long_countdown_survives_on_the_weekly_slot():
+    """A monthly window (adi-cost) resets up to 31 days out; the weekly slot
+    must carry it rather than clamp it to twelve days."""
+    now = 1_787_000_000.0
+    assert protocol.secs_until(now + 17 * 86400, now,
+                               protocol.MONTH_COUNTDOWN_MAX_S) == 17 * 86400
+    # A misparse is still clamped, just at a month and not at a year.
+    assert protocol.secs_until(now + 31536000, now,
+                               protocol.MONTH_COUNTDOWN_MAX_S) == 31 * 86400
+    # The default ceiling for every other field is unchanged.
+    assert protocol.secs_until(now + 17 * 86400, now) == protocol.COUNTDOWN_MAX_S
+
+
+# --- spend dials: the board names them, plan accounts are untouched --------
+
+from pc.providers import base as _base
+
+
+def _frame(**kw):
+    kw.setdefault("provider", "claude")
+    kw.setdefault("src", "cli")
+    kw.setdefault("observed_at", 1_787_000_000.0)
+    return _base.NormalizedUsageFrame(**kw)
+
+
+def test_a_plan_account_message_carries_no_cost_key():
+    msg = protocol.frame_to_usage(
+        _frame(session_pct=10.0, weekly_pct=20.0), 1_787_000_000.0)
+    assert "cd" not in msg
+
+
+def test_spend_dials_travel_as_a_bitmask():
+    for dials in (1, 2, 3):
+        msg = protocol.frame_to_usage(
+            _frame(session_pct=1.0, weekly_pct=2.0, cost_dials=dials),
+            1_787_000_000.0)
+        assert msg["cd"] == dials
+
+
+def test_a_spend_message_still_fits_the_board_line():
+    msg = protocol.frame_to_usage(
+        _frame(session_pct=99.9, weekly_pct=94.1, cost_dials=3,
+               weekly_resets_at=1_787_000_000.0 + 31 * 86400,
+               n_run=3, n_wait=2, n_stuck=1, n_idle=4, n_agents=7,
+               state="running"),
+        1_787_000_000.0)
+    raw, why = protocol.encode_checked(msg)
+    assert raw is not None, why
+
+
+def test_changing_the_mode_is_news_worth_a_push():
+    a = protocol.frame_to_usage(_frame(session_pct=1.0), 1_787_000_000.0)
+    b = protocol.frame_to_usage(_frame(session_pct=1.0, cost_dials=1),
+                                1_787_000_000.0)
+    assert protocol.meaningful_usage(a) != protocol.meaningful_usage(b)

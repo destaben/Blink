@@ -72,6 +72,13 @@ def encode(msg: dict) -> bytes:
 # under twelve days: comfortably clear of the seven-day window, and six digits.
 COUNTDOWN_MAX_S = 999999
 
+# The weekly slot also carries a monthly window on accounts that have no plan
+# windows (pc/providers/adi_cost.py), and a month is longer than the 12 days
+# above. 31 days is the most one can be, and seven digits is one byte more than
+# six -- paid by this single field only, so the widest line the daemon can
+# build stays under the cap.
+MONTH_COUNTDOWN_MAX_S = 31 * 86400
+
 
 def encode_checked(msg: dict):
     """encode(), but None when the result could not be received.
@@ -88,7 +95,8 @@ def encode_checked(msg: dict):
     return raw, None
 
 
-def secs_until(resets_at, now_epoch: float) -> int:
+def secs_until(resets_at, now_epoch: float,
+               max_s: int = COUNTDOWN_MAX_S) -> int:
     """Seconds until `resets_at`. -1 when unknown or already past.
 
     -1 rather than 0 for missing input: 0 renders as "resets now", which is a
@@ -115,7 +123,7 @@ def secs_until(resets_at, now_epoch: float) -> int:
     # have already passed. Ceiling keeps the value honest (the window really
     # does have "about a second" left) and keeps 0 reserved for the firmware's
     # own countdown reaching it.
-    return min(COUNTDOWN_MAX_S, max(1, math.ceil(resets_at - now_epoch)))
+    return min(max_s, max(1, math.ceil(resets_at - now_epoch)))
 
 
 def decode(line: str):
@@ -152,6 +160,29 @@ class LineReader:
 
 def welcome(app: str, app_ver: str) -> dict:
     return {"t": "welcome", "v": VERSION, "app": app, "app_ver": app_ver}
+
+
+def approve_req(req_id: str, tool: str, text: str, ttl_s: int) -> dict:
+    """Ask the board to show a permission request and take a tap as the answer.
+
+    KEY ORDER IS PART OF THE FORMAT. `text` is last, because the board looks
+    keys up by name in the raw line and the text is the one value somebody
+    other than this program wrote. Every other key is found before the free
+    text can be mistaken for one (firmware/src/msg_parse.c treats a match as
+    a key only when a colon follows it, and inner quotes are escaped, so the
+    order is a second line of defence rather than the only one).
+
+    The caller has already established that `text` is displayable whole
+    (pc/approvals.displayable); this does not truncate. A request that does
+    not fit is not sent at all -- see Approvals._offer.
+    """
+    return {"t": "approve_req", "v": VERSION, "id": req_id, "tool": tool,
+            "ttl": int(ttl_s), "cmd": text}
+
+
+def approve_end(req_id: str) -> dict:
+    """Withdraw a request: it was answered at the computer, or given up on."""
+    return {"t": "approve_end", "v": VERSION, "id": req_id}
 
 
 def bye() -> dict:
@@ -198,11 +229,11 @@ def _round_pct(v):
 
 def usage(session_pct, session_resets_at, weekly_pct, weekly_resets_at, models,
           session_resets_in_s=-1, weekly_resets_in_s=-1, stale=False,
-          provider="claude", src="cli", state="", n_sess=0, n_run=0, n_wait=0, n_stuck=0,
+          provider="claude", src="cli", cost_dials=0, state="", n_sess=0, n_run=0, n_wait=0, n_stuck=0,
           n_agents=0, p2="", p2_session_pct=UNKNOWN,
           p2_weekly_pct=UNKNOWN, p2_session_resets_in_s=-1,
           p2_weekly_resets_in_s=-1, p2_stale=False, burn_pph=None,
-          age_s=-1, p2_age_s=-1, active_age_s=-1) -> dict:
+          age_s=-1, p2_age_s=-1, active_age_s=-1, weekly_usd=0) -> dict:
     """A usage message.
 
     The *_resets_in_s fields carry the remaining seconds. The board has no
@@ -328,6 +359,15 @@ The firmware reads this field: proto.c's "usage" handler calls
     # spending a budget a future field will need. An absent key already means
     # "unknown" on both sides.
     extra = {"provider": provider, "src": src}
+    # Absent means a plan account: omitted, not sent as 0, so those messages
+    # do not grow by a byte. The board defaults an absent key to 0.
+    if cost_dials:
+        extra["cd"] = int(cost_dials)
+    # Dollars spent this month, only once a spend account is past its budget.
+    # Absent on every other line, so the widest line the daemon builds today
+    # does not grow; see tests/pc/test_protocol.py for the worst case with it.
+    if weekly_usd and weekly_usd > 0:
+        extra["usd"] = int(weekly_usd)
     if state:
         extra["state"] = state
 
@@ -502,9 +542,12 @@ def frame_to_usage(frame, now_epoch: float, secondary=None) -> dict:
         frame.weekly_pct, frame.weekly_resets_at,
         [],
         session_resets_in_s=secs_until(frame.session_resets_at, now_epoch),
-        weekly_resets_in_s=secs_until(frame.weekly_resets_at, now_epoch),
+        weekly_resets_in_s=secs_until(frame.weekly_resets_at, now_epoch,
+                                      MONTH_COUNTDOWN_MAX_S),
         stale=frame.stale,
         provider=frame.provider, src=frame.src,
+        cost_dials=frame.cost_dials,
+        weekly_usd=frame.weekly_usd,
         # One light for the whole desk: the worse of the two providers'
         # states, and the counts of both. The light is a claim on the person
         # ("something needs you"), and a Codex session waiting on them is

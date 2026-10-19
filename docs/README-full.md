@@ -272,6 +272,68 @@ config partition erased first (`esptool.py erase_region 0x3b0000 0x30000`).
 Pass `--port` to name a board when more than one is attached, and `--no-build`
 to reuse the last build.
 
+**A board on your own bench is not a unit to ship: use `tools/dev.sh flash`,
+not `burn.sh`.** `burn.sh` stamps the edition, and the stamp is write-once
+(above); a development board burned with it is a Claude or Codex unit for good,
+and undoing that means erasing its config partition. `dev.sh flash` stops the
+daemon, asks the chip whether it is fused (and refuses if it is, since it
+writes plaintext), builds, flashes at 115200 and restarts the daemon. It does
+not stamp. The board shows HOST LOST while the daemon is down, which is
+expected.
+
+### Flashing a bench board
+
+One command:
+
+```bash
+tools/dev.sh flash
+```
+
+It stops the installed daemon (the launchd job and, if it outlives the job, its
+process), reads `FLASH_CRYPT_CNT` and refuses a fused chip, builds, flashes at
+115200, and puts the installed daemon back, even on Ctrl-C. Nothing is run by
+hand around it. `PORT=/dev/cu.usbserial-XXXX` names the board when more than one
+is attached; the default is the first `/dev/cu.usbserial*`.
+
+The build is the **pilot-panel** one by default (`firmware/pilot.conf`), because
+that is what the bench board needs. Production units and the pilot boards carry
+different display modules: production firmware on a pilot panel comes out
+mirrored, red and blue swapped, and dim, and the reverse is wrong too
+(`BLINK_PANEL_PILOT` in `firmware/Kconfig`). A board with a production panel:
+`PILOT=0 tools/dev.sh flash`. Shipped units are built by `burn.sh`, which this
+default does not touch. The fuse state does not say which panel a board has. If
+the picture is mirrored, flash again with the other value; do **not** change
+`rotation` in the overlay, because 90 and 270 differ by a 180 degree turn and
+neither un-mirrors, and touch is solved against 90.
+
+`BLINK_SKIP_EFUSE_CHECK=1` overrides the fuse check and should not be used: a
+plaintext image on a fused chip will not boot.
+
+Then **look at the board**: orientation, no mirror, red and blue the right way
+round, touch landing where you press, still alive after 90 seconds. `dev.sh`
+prints that reminder at the end. Done means flashed and seen, not built.
+
+If something other than the Blink daemon holds the port, `dev.sh` says what and
+stops; it never kills a process it does not recognise.
+
+`dev.sh` builds without MCUboot, so a board flashed this way is not updatable
+over the air until it is re-flashed with `tools/burn.sh` (**unverified** on this
+board; `burn.sh` documents the effect of a plain `west flash`).
+
+If `dev.sh` says `cannot tell whether this chip is fused`, the cause is not
+always a busy port: it discards `espefuse`'s own error. Run
+`espefuse.py --port <port> summary` and read it. On 2026-10-15 it was an
+`ImportError: cannot import name 'BitStream' from 'bitstring'`: esptool does not
+cap `bitstring`, and 5.0 dropped that name. Fix it in the esptool environment
+with `pipx inject esptool 'bitstring<5' --force` (or
+`pip install 'bitstring<5'` in the venv).
+
+The scripts find the Zephyr workspace themselves (`tools/lib_zephyr.sh`,
+`BLINK_ZEPHYR` overrides). They are meant to be run, not sourced from an
+interactive zsh: with `nomatch` on, a candidate path that does not exist makes
+the lookup fail outright and it reads as "no workspace" on a machine that has
+one.
+
 **What it flashes is not the release artifact.** `zephyr.signed.bin` is signed
 but not *confirmed*: its MCUboot trailer says "boot this once". That is right
 for OTA, where the image lands in slot 1 and the firmware confirms it after it

@@ -16,6 +16,7 @@
 #include "usage_view.h"
 #include "usage_state.h"
 #include "usage_freshness.h"
+#include "ui_approve.h"
 #include "net_time.h"
 #include "version.h"
 #include "cfg_store.h"
@@ -120,10 +121,17 @@ static void emit(const char *json)
 
 void proto_send_pref(void)
 {
-	char buf[64];
+	char buf[96];
 
+	/* "approve":1 says this firmware can show a permission request and
+	 * send back an answer. It rides on the pref because that is the one
+	 * message the board sends on EVERY greeting, including the connect path
+	 * that does not reset it and so never produces a hello. The daemon
+	 * offers approvals only to a board that said so: an older one would
+	 * ignore the request, and a person waiting on it would wait for
+	 * nothing. */
 	snprintf(buf, sizeof(buf),
-		 "{\"t\":\"pref\",\"v\":%d,\"provider\":\"%s\"}",
+		 "{\"t\":\"pref\",\"v\":%d,\"provider\":\"%s\",\"approve\":1}",
 		 PROTO_VERSION,
 		 cfg_get_main_src() == CFG_MAIN_SRC_CODEX ? "codex" : "claude");
 	emit(buf);
@@ -366,6 +374,22 @@ static void dispatch(const char *json)
 		num(json, "n_wait", &nw, 0, 9999);
 		num(json, "n_stuck", &nst, 0, 9999);
 		usage_view_set_counts((int)ns, (int)nr, (int)nw, (int)nst);
+
+		/* Which dials are spend rather than a plan window. Absent is the
+		 * normal case and means 0, and it is applied on every message so a
+		 * daemon that stops sending it puts the plan names back. */
+		double cd = 0;
+
+		num(json, "cd", &cd, 0, 3);
+		usage_view_set_cost_dials((int)cd);
+
+		/* Dollars past the budget; absent means not sent, and is
+		 * applied on every message so it clears when spend drops back
+		 * under the budget or the month rolls over. */
+		double usd = 0;
+
+		num(json, "usd", &usd, 0, 99999);
+		usage_view_set_weekly_usd((int)usd);
 
 		char p1[16];
 
@@ -682,6 +706,52 @@ static void dispatch(const char *json)
 		msg_get_str(json, "label", lbl, sizeof(lbl));
 		num(json, "n", &n, 0, 9999);
 		usage_view_set_session(lbl, (int)n);
+	} else if (strcmp(type, "approve_req") == 0) {
+		/*
+		 * A permission request raised on the computer. Order of keys on
+		 * the wire matters here: the daemon puts `cmd` LAST, and every
+		 * other key is looked up before the free text could be mistaken
+		 * for one.
+		 *
+		 * The text is read with msg_get_str_esc and NEVER with
+		 * msg_get_str, which cuts at the first quote. Anything that does
+		 * not arrive whole -- unterminated, too long for the buffer,
+		 * empty -- is declined (answer 2) rather than shown partly: the
+		 * owner would be approving a command they had not read.
+		 *
+		 * Nothing from the request is printed. See ui_approve.h.
+		 */
+		char id[12] = "";
+		char tool[24] = "";
+		char cmd[256];
+		bool cut = false;
+		double ttl = 30;
+
+		msg_get_str(json, "id", id, sizeof(id));
+		msg_get_str(json, "tool", tool, sizeof(tool));
+		num(json, "ttl", &ttl, 1, 600);
+		for (const char *c = id; *c; c++) {
+			/* The id is echoed back inside a JSON string; only a
+			 * plain token is safe to echo. */
+			if (!((*c >= '0' && *c <= '9') ||
+			      (*c >= 'a' && *c <= 'f'))) {
+				id[0] = '\0';
+				break;
+			}
+		}
+		if (!id[0]) {
+			return;
+		}
+		if (!msg_get_str_esc(json, "cmd", cmd, sizeof(cmd), &cut) ||
+		    cut || !cmd[0] ||
+		    !ui_approve_show(id, tool, cmd, (int)ttl)) {
+			ui_approve_decline(id);
+		}
+	} else if (strcmp(type, "approve_end") == 0) {
+		char id[12] = "";
+
+		msg_get_str(json, "id", id, sizeof(id));
+		ui_approve_end(id);
 	}
 	/* unknown types ignored */
 }
@@ -781,6 +851,20 @@ void proto_service(void)
 {
 	drain_rx();
 	int64_t now = k_uptime_get();
+
+	/* An answer from the Allow / Deny card, written here and not from the
+	 * button callback so the wire has one writer. */
+	char aid[12];
+	int ares;
+
+	if (ui_approve_take_answer(aid, sizeof(aid), &ares)) {
+		char abuf[80];
+
+		snprintf(abuf, sizeof(abuf),
+			 "{\"t\":\"approve_res\",\"v\":%d,\"id\":\"%s\",\"ok\":%d}",
+			 PROTO_VERSION, aid, ares);
+		emit(abuf);
+	}
 
 	if (now - last_ping_ms >= PING_INTERVAL_MS) {
 		send_ping();
