@@ -30,7 +30,7 @@
 #define CA_TAG_GITHUB 3
 #define CA_TAG_GH_CDN 4
 #define OTA_HOST "github.com"
-#define OTA_BASE "/KfirLevy258/Blink/releases/latest/download/"
+#define OTA_BASE "/destaben/Blink/releases/latest/download/"
 /* Fixed asset names; the manifest's sha256 pins the exact bytes, so a release
  * changing between check and install fails safe at the hash step. */
 #define OTA_MANIFEST_PATH OTA_BASE "manifest.json"

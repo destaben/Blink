@@ -13,10 +13,8 @@
 # launchd job installed by `blink install` (the same stop and restore as
 # burn.sh), so there is nothing to run by hand around it.
 #
-# The build is the PILOT-panel one by default, because that is what the bench
-# board needs (production firmware on it came out mirrored, 2026-10-15). A
-# board with a production panel: PILOT=0 tools/dev.sh flash. Shipped units are
-# built by burn.sh and are not affected by this default.
+# The build is always the PILOT-panel one: every board here has the pilot panel
+# (production firmware on it came out mirrored, 2026-10-15).
 set -euo pipefail
 
 PORT="${PORT:-$(ls /dev/cu.usbserial* 2>/dev/null | head -1 || true)}"
@@ -140,11 +138,6 @@ flash)
 				# key -- the board boots, but every later OTA is rejected and reverts.
 				echo '             -DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE="\"$HOME/.blink/ota_signing_key_p256.pem\"" \'
 				echo "           && $ROOT/tools/flash_encrypted.sh $PORT"
-				echo "       If this is one of the two PILOT boards, add to that build:"
-				echo "           -DEXTRA_CONF_FILE=pilot.conf"
-				echo "       (their display module differs; a stock build renders them"
-				echo "        mirrored, red/blue swapped and dim. Judge per board -- being"
-				echo "        fused is NOT the same thing as being a pilot.)"
 				echo "       BLINK_SKIP_EFUSE_CHECK=1 overrides."
 			} >&2
 			exit 1
@@ -156,20 +149,25 @@ flash)
 			;;
 		esac
 	fi
-	activate   # sources zephyr-env.sh too
+	if [ "${BLINK_PLAIN_FLASH:-0}" != "1" ]; then
+			# A plain `west flash` writes only the app at 0x1000 and takes the MCUboot
+			# bootloader with it, so the board can never take an OTA again. Refuse it
+			# unless the caller asks for that loss by name. burn.sh keeps MCUboot.
+			# Refusing before the build leaves the installed daemon alone: the EXIT
+			# trap restores it.
+			{
+				echo "FATAL: dev.sh flashes WITHOUT MCUboot. The board loses OTA for good."
+				echo "       Use tools/burn.sh, which keeps MCUboot:"
+				echo "         tools/burn.sh --edition <claude|codex> --port $PORT"
+				echo "       To accept the loss on purpose: BLINK_PLAIN_FLASH=1 tools/dev.sh flash"
+			} >&2
+			exit 1
+		fi
+		activate   # sources zephyr-env.sh too
 	cd "$ROOT/firmware"
-	# The pilot-panel build (firmware/pilot.conf) unless PILOT=0. Always
-	# passed, empty for production: EXTRA_CONF_FILE is cached in the build
-	# directory, so a pilot build followed by a plain one would otherwise stay
-	# a pilot build. A production firmware on a pilot panel (or the reverse)
-	# renders mirrored, red/blue swapped and dim -- see BLINK_PANEL_PILOT.
-	PILOT="${PILOT:-1}"
-	panel_conf=""
-	if [ "$PILOT" = 1 ]; then
-		panel_conf="pilot.conf"
-	fi
+	# Always the pilot-panel build (firmware/pilot.conf). See BLINK_PANEL_PILOT.
 	west build -b "$BOARD" . -- -DUSE_CCACHE=0 \
-		-DEXTRA_CONF_FILE="$panel_conf" | tail -3
+		-DEXTRA_CONF_FILE=pilot.conf | tail -3
 	# 921600 is beyond what this board's CH340 tolerates; it fails mid-write.
 	west flash --esp-device "$PORT" --esp-baud-rate 115200 | tail -1
 	# The installed daemon comes back on EXIT. Only a machine that had none
@@ -182,8 +180,8 @@ flash)
 	# pilot panel). It names the build so the answer points at the fix.
 	cat <<EOF
 
-Flashed a $([ -n "$panel_conf" ] && echo PILOT || echo PRODUCTION)-panel build. Now look at the board:
-  - mirrored, or red/blue swapped, or dim?  Flash again with PILOT=$([ -n "$panel_conf" ] && echo 0 || echo 1); do not change 'rotation'.
+Flashed a PILOT-panel build. Now look at the board:
+  - mirrored, or red/blue swapped, or dim?  Do not change 'rotation'; check the build.
   - touch lands where you press?
   - still alive after 90 s?  (unconfirmed images revert at about 90 s)
 EOF

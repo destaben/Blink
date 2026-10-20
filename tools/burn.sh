@@ -183,9 +183,12 @@ if [ "$SKIP_BUILD" = 0 ]; then
        Every unit must be signed with the SAME key or its OTA updates will be
        rejected in the field. See tools/backup_keys.sh."
 	blink_zephyr_activate || die "cannot build without a Zephyr workspace."
+	# Every board here has the pilot (POC) panel: firmware/pilot.conf. A production
+	# build on it comes out mirrored, red and blue swapped, and dim.
 	( cd "$ROOT/firmware" && west build --sysbuild -d build-sb -b "$BOARD" . -- \
 		-DSB_CONFIG_BOOTLOADER_MCUBOOT=y -DUSE_CCACHE=0 \
-		-DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE="\"$KEY\"" ) >/dev/null 2>&1 \
+		-DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE="\"$KEY\"" \
+		-DEXTRA_CONF_FILE=pilot.conf ) >/dev/null 2>&1 \
 		|| die "build failed. Run the west build by hand to see why."
 	echo "   built"
 else

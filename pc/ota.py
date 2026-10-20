@@ -36,7 +36,7 @@ import urllib.request
 # 75 s of every firmware flash (user-reported 2026-08-30).
 NO_WINDOW = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 
-RELEASE_BASE = "https://github.com/KfirLevy258/Blink/releases/latest/download/"
+RELEASE_BASE = "https://github.com/destaben/Blink/releases/latest/download/"
 MANIFEST_URL = RELEASE_BASE + "manifest.json"
 FIRMWARE_URL = RELEASE_BASE + "blink-fw.bin"
 

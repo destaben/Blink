@@ -5,7 +5,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$HERE/.."
-REPO="${OTA_REPO:-KfirLevy258/Blink}"
+REPO="${OTA_REPO:-destaben/Blink}"
 REPO_URL="${OTA_REPO_URL:-https://github.com/$REPO.git}"
 TAG="v$(sed -n 's/#define BLINK_FW_VERSION "\(.*\)"/\1/p' "$ROOT/firmware/src/version.h")"
 
